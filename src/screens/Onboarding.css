@@ -184,6 +184,7 @@
 .ob-q-sub { font-size: 16px; color: var(--text2); margin-top: -16px; }
 .ob-question-group { display: flex; flex-direction: column; gap: 12px; }
 .ob-q-label { font-size: 14px; color: var(--text2); font-weight: 500; }
+.ob-q-hint { font-size: 12px; color: var(--text3); margin-top: -6px; }
 .ob-pill-group { display: flex; flex-wrap: wrap; gap: 8px; }
 .ob-pill {
   background: var(--bg3);

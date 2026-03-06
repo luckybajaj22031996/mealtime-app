@@ -7,7 +7,7 @@ import { CONTENT_DB } from '../data/contentDB';
 import './Home.css';
 
 const MOODS = [
-  { id: 'anything', label: 'Anything', emoji: '✨' },
+  { id: 'foryou', label: 'For you', emoji: '✨' },
   { id: 'laugh', label: 'Make me laugh', emoji: '😂' },
   { id: 'think', label: 'Make me think', emoji: '🧠' },
   { id: 'chill', label: 'Just chill', emoji: '😌' },
@@ -16,19 +16,19 @@ const MOODS = [
 export default function Home() {
   const navigate = useNavigate();
   const { profile, settings, setSettings, addToHistory, setFeedback, startSession, setLastMood, clearLastWatched } = useUserStore();
-  const [mood, setMood] = useState(profile.lastMood || 'anything');
+  const [mood, setMood] = useState(profile.lastMood || 'foryou');
   const [recs, setRecs] = useState(() => {
     try {
-      const cached = sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'anything'));
+      const cached = sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'foryou'));
       return cached ? JSON.parse(cached) : [];
     } catch { return []; }
   });
   const [loading, setLoading] = useState(() => {
-    try { return !sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'anything')); } catch { return true; }
+    try { return !sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'foryou')); } catch { return true; }
   });
   const [error, setError] = useState('');
   const [aiUsed, setAiUsed] = useState(() => {
-    try { return sessionStorage.getItem('mealtime_ai_' + (profile.lastMood || 'anything')) === 'true'; } catch { return false; }
+    try { return sessionStorage.getItem('mealtime_ai_' + (profile.lastMood || 'foryou')) === 'true'; } catch { return false; }
   });
   const [showPostWatch, setShowPostWatch] = useState(false);
 

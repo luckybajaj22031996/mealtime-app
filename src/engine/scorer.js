@@ -44,24 +44,10 @@ export const ONBOARDING_CARDS = [
     optionA: { id: 'R001', title: 'Shark Tank India', platform: 'SonyLIV', desc: 'Business pitches, Indian entrepreneurs, Hindi', tags: ['business','informative','India','Hindi'] },
     optionB: { id: 'R011', title: 'Hot Ones: Shah Rukh Khan', platform: 'YouTube', desc: 'Celebrity interview, hot wings, pure fun', tags: ['entertainment','celebrity','fun','English'] },
   },
-  {
-    id: 'card7',
-    question: "Which would you rather watch?",
-    label: "Duration comfort",
-    optionA: { id: 'D001', title: 'A 42-min drama episode', platform: '', desc: 'Something immersive you get lost in', tags: ['long','immersive','commitment'] },
-    optionB: { id: 'T013', title: 'A 6-min animated explainer', platform: '', desc: 'Quick, punchy — done before the meal', tags: ['short','quick','snack'] },
-  },
-  {
-    id: 'card8',
-    question: "Which would you rather watch?",
-    label: "Content energy",
-    optionA: { id: 'mood_laugh', title: 'Something that makes me laugh', platform: '', desc: 'Comedy, light, fun energy', tags: ['comedy','light','fun','laugh'] },
-    optionB: { id: 'mood_think', title: 'Something that makes me think', platform: '', desc: 'Documentary, drama, insight', tags: ['documentary','drama','insightful','think'] },
-  },
 ];
 
 // Build tag weight vector from onboarding picks
-export function buildTagWeightsFromPicks(picks, mealDuration, language, vibe) {
+export function buildTagWeightsFromPicks(picks, mealDuration, language) {
   const weights = {};
 
   const bump = (tags, delta) => {
@@ -88,15 +74,6 @@ export function buildTagWeightsFromPicks(picks, mealDuration, language, vibe) {
   if (language === 'hindi') bump(['Hindi'], 4);
   else if (language === 'english') bump(['English'], 4);
   else { bump(['Hindi'], 2); bump(['English'], 2); }
-
-  // Vibe signal
-  const vibeMap = {
-    chill: ['light','fun','warm','comedy','scenic','nostalgic','gentle'],
-    think: ['educational','informative','insightful','think','fascinating','science'],
-    laugh: ['comedy','funny','light','laugh','fun','relatable'],
-    anything: [],
-  };
-  bump(vibeMap[vibe] || [], 2);
 
   return weights;
 }
@@ -196,14 +173,14 @@ function applyFeedbackToTagWeights(baseWeights, feedback) {
 function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) {
   // When a specific mood is selected, mood fit matters more and taste matters less
   // When 'anything', taste profile dominates
-  const hasMood = mood && mood !== 'anything';
+  const hasMood = mood && mood !== 'foryou';
 
   const qualityWeight = 0.12;
-  const durationWeight = 0.18;
-  const tagWeight = hasMood ? 0.15 : 0.28;      // taste matters less when mood is active
-  const genreWeight = 0.08;
-  const noveltyWeight = 0.12;
-  const moodWeight = hasMood ? 0.35 : 0.00;      // mood is the dominant signal when active
+  const durationWeight = hasMood ? 0.15 : 0.20;
+  const tagWeight = hasMood ? 0.12 : 0.33;      // taste dominates in "For you", secondary with mood
+  const genreWeight = hasMood ? 0.05 : 0.10;
+  const noveltyWeight = hasMood ? 0.08 : 0.15;
+  const moodWeight = hasMood ? 0.48 : 0.00;      // mood is dominant when active
 
   // Remaining weight to fill to ~1.0 (rounding tolerance okay)
   // anything: 0.12 + 0.18 + 0.28 + 0.08 + 0.12 + 0.00 = 0.78 (+ quality headroom)
@@ -257,7 +234,7 @@ function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) 
 
 // Tag-based mood scoring — each content piece scored 0-100 for mood fit
 function computeMoodFit(content, mood) {
-  if (!mood || mood === 'anything') return 50;
+  if (!mood || mood === 'foryou') return 50;
 
   const moodSignals = {
     laugh: {
@@ -329,7 +306,7 @@ function computeMoodFit(content, mood) {
 }
 
 function isMoodContradiction(content, mood) {
-  if (!mood || mood === 'anything') return false;
+  if (!mood || mood === 'foryou') return false;
 
   const tags = content.tags;
 

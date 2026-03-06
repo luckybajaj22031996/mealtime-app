@@ -21,7 +21,6 @@ export default function Onboarding() {
   const [picks, setPicks] = useState([]);
   const [mealDuration, setMealDuration] = useState(null);
   const [language, setLanguage] = useState(null);
-  const [vibe, setVibe] = useState(null);
   const [error, setError] = useState('');
   const [builtProfile, setBuiltProfile] = useState(null);
 
@@ -39,30 +38,28 @@ export default function Onboarding() {
   };
 
   const handleFinish = async () => {
-    if (!mealDuration || !language || !vibe) return;
+    if (!mealDuration || !language) return;
     setStep(STEPS.PROCESSING);
     setError('');
 
-    const tagWeights = buildTagWeightsFromPicks(picks, mealDuration, language, vibe);
+    const tagWeights = buildTagWeightsFromPicks(picks, mealDuration, language);
 
     let tasteProfile = null;
     if (settings.aiEnabled && settings.apiKey) {
       try {
-        tasteProfile = await buildTasteProfile(settings.apiKey, picks, mealDuration, language, vibe);
+        tasteProfile = await buildTasteProfile(settings.apiKey, picks, mealDuration, language, null);
       } catch (e) {
         console.warn('AI profile build failed, using hardcoded:', e.message);
       }
     }
 
-    // Build a hardcoded summary if AI didn't generate one
     if (!tasteProfile) {
       const genreWeights = deriveGenreWeights(tagWeights);
       const sorted = Object.entries(genreWeights).sort((a, b) => b[1] - a[1]);
       const topGenres = sorted.slice(0, 3).map(([g]) => g.split(' / ')[0]);
       const langLabel = language === 'hindi' ? 'Hindi' : language === 'english' ? 'English' : 'Hindi & English';
-      const vibeLabel = { laugh: 'comedy', think: 'thought-provoking content', chill: 'light and easy content', anything: 'a mix of everything' }[vibe] || 'a mix';
       tasteProfile = {
-        summary: `You lean towards ${topGenres[0]} and ${topGenres[1]}, prefer ${langLabel} content, and default to ${vibeLabel} during meals.`,
+        summary: `You lean towards ${topGenres[0]} and ${topGenres[1]}, with a preference for ${langLabel} content.`,
         topGenres: sorted.slice(0, 3).map(([g]) => g),
       };
     }
@@ -72,13 +69,13 @@ export default function Onboarding() {
       picks,
       mealDuration,
       language,
-      vibe,
+      vibe: null,
       tagWeights,
       tasteProfile,
       history: [],
       feedback: {},
       sessionCount: 0,
-      lastMood: vibe,
+      lastMood: null,
       lastSessionTime: null,
       lastWatched: null,
     };
@@ -112,10 +109,8 @@ export default function Onboarding() {
         <QuestionsScreen
           mealDuration={mealDuration}
           language={language}
-          vibe={vibe}
           setMealDuration={setMealDuration}
           setLanguage={setLanguage}
-          setVibe={setVibe}
           onFinish={handleFinish}
           error={error}
         />
@@ -135,9 +130,9 @@ function WelcomeScreen({ onStart }) {
       <h1 className="ob-title">MealTime</h1>
       <p className="ob-subtitle">5 perfect things to watch<br />before your food gets cold.</p>
       <div className="ob-divider" />
-      <p className="ob-body">Answer 8 quick questions — we'll figure out what you actually want to watch. No scrolling. No reruns out of habit.</p>
+      <p className="ob-body">6 quick picks and 2 questions. We'll figure out what you actually like. Takes about a minute.</p>
       <button className="btn-primary ob-start-btn" onClick={onStart}>Get started →</button>
-      <p className="ob-footer">Takes about 2 minutes</p>
+      <p className="ob-footer">No login. No signup.</p>
     </div>
   );
 }
@@ -205,16 +200,17 @@ function ChoiceCard({ option, choice, selected, onSelect }) {
   );
 }
 
-function QuestionsScreen({ mealDuration, language, vibe, setMealDuration, setLanguage, setVibe, onFinish, error }) {
-  const allAnswered = mealDuration && language && vibe;
+function QuestionsScreen({ mealDuration, language, setMealDuration, setLanguage, onFinish, error }) {
+  const allAnswered = mealDuration && language;
 
   return (
     <div className="ob-questions fade-up">
       <h2 className="ob-q-title">Almost there</h2>
-      <p className="ob-q-sub">3 quick things so we get the fit right.</p>
+      <p className="ob-q-sub">2 quick things so we get the fit right.</p>
 
       <div className="ob-question-group">
         <label className="ob-q-label">How long is your typical meal?</label>
+        <p className="ob-q-hint">We'll find content that fits this window.</p>
         <div className="ob-pill-group">
           {[
             { val: 'under15', label: 'Under 15 min' },
@@ -243,24 +239,6 @@ function QuestionsScreen({ mealDuration, language, vibe, setMealDuration, setLan
               key={opt.val}
               className={`ob-pill ${language === opt.val ? 'active' : ''}`}
               onClick={() => setLanguage(opt.val)}
-            >{opt.label}</button>
-          ))}
-        </div>
-      </div>
-
-      <div className="ob-question-group">
-        <label className="ob-q-label">Default meal vibe?</label>
-        <div className="ob-pill-group">
-          {[
-            { val: 'laugh', label: 'Make me laugh' },
-            { val: 'think', label: 'Something interesting' },
-            { val: 'chill', label: 'Just decompress' },
-            { val: 'anything', label: "Whatever's good" },
-          ].map(opt => (
-            <button
-              key={opt.val}
-              className={`ob-pill ${vibe === opt.val ? 'active' : ''}`}
-              onClick={() => setVibe(opt.val)}
             >{opt.label}</button>
           ))}
         </div>
@@ -309,7 +287,7 @@ function RevealScreen({ profile, onContinue }) {
           ))}
         </div>
       )}
-      <p className="ob-reveal-note">This gets better as you use it. Every thumbs up and thumbs down teaches it more about you.</p>
+      <p className="ob-reveal-note">Your "For you" picks are ready. Switch moods anytime — or just trust the picks.</p>
       <button className="btn-primary ob-start-btn" onClick={onContinue}>
         Show me my picks →
       </button>
