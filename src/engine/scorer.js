@@ -54,7 +54,7 @@ export const ONBOARDING_CARDS = [
   {
     id: 'card8',
     question: "Which would you rather watch?",
-    label: "Default mood",
+    label: "Content energy",
     optionA: { id: 'mood_laugh', title: 'Something that makes me laugh', platform: '', desc: 'Comedy, light, fun energy', tags: ['comedy','light','fun','laugh'] },
     optionB: { id: 'mood_think', title: 'Something that makes me think', platform: '', desc: 'Documentary, drama, insight', tags: ['documentary','drama','insightful','think'] },
   },
@@ -192,21 +192,29 @@ function applyFeedbackToTagWeights(baseWeights, feedback) {
   return weights;
 }
 
-// Scoring — rebalanced weights
+// Scoring — dynamic weights based on whether a mood is active
 function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) {
-  const qualityWeight = 0.15;
-  const durationWeight = 0.20;
-  const tagWeight = 0.25;
-  const genreWeight = 0.10;
-  const noveltyWeight = 0.15;
-  const moodWeight = 0.15;   // new: mood fit based on tags
+  // When a specific mood is selected, mood fit matters more and taste matters less
+  // When 'anything', taste profile dominates
+  const hasMood = mood && mood !== 'anything';
+
+  const qualityWeight = 0.12;
+  const durationWeight = 0.18;
+  const tagWeight = hasMood ? 0.15 : 0.28;      // taste matters less when mood is active
+  const genreWeight = 0.08;
+  const noveltyWeight = 0.12;
+  const moodWeight = hasMood ? 0.35 : 0.00;      // mood is the dominant signal when active
+
+  // Remaining weight to fill to ~1.0 (rounding tolerance okay)
+  // anything: 0.12 + 0.18 + 0.28 + 0.08 + 0.12 + 0.00 = 0.78 (+ quality headroom)
+  // mood:     0.12 + 0.18 + 0.15 + 0.08 + 0.12 + 0.35 = 1.00
 
   const qualityScore = content.qualityScore;
   const durScore = durationFitScore(content.duration, profile.mealDuration);
   const tagScore = tagMatchScore(content, enrichedTagWeights);
   const genreScore = genreWeights[content.genre] ?? 50;
 
-  // Mood fit — scored per content based on its actual tags, not just genre
+  // Mood fit — scored per content based on its actual tags
   const moodScore = computeMoodFit(content, mood);
 
   // Novelty — graduated penalty, not binary
@@ -220,7 +228,7 @@ function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) 
     else noveltyScore = 60;
   }
 
-  // Feedback boost — reduced, let tag learning do the work
+  // Feedback boost
   const feedback = (profile.feedback || {})[content.id];
   let feedbackBoost = 0;
   if (feedback === 'up') feedbackBoost = 10;
