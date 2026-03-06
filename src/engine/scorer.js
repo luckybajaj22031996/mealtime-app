@@ -240,30 +240,38 @@ function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) 
 function computeMoodFit(content, mood) {
   if (!mood || mood === 'anything') return 50; // neutral
 
-  // Tags that strongly signal each mood
+  // Tags that signal each mood — boost = good fit, penalty = bad fit
   const moodSignals = {
     laugh: {
       boost: ['funny','fun','comedy','hilarious','light','laugh','witty','cringe comedy',
               'comedy-drama','quirky','absurd','satire','dry humour','sharp','warm',
-              'panel show','hot wings','comedy talk show','celebrity','relatable'],
+              'panel show','hot wings','comedy talk show','celebrity','relatable',
+              'observational','clean comedy','food comedy','crowd interaction'],
       penalty: ['dark','intense','crime','serial killer','murder','gripping','thriller',
-                'psychological','shocking','investigative','kidnapping','corporate fraud'],
+                'psychological','shocking','investigative','kidnapping','corporate fraud',
+                'educational','informative','science','documentary','explained','philosophy'],
     },
     think: {
       boost: ['educational','informative','science','explained','history','philosophy',
               'mind-blowing','fascinating','thought-provoking','investigative','analytical',
               'gripping','intense','spy','thriller','drama','psychological','documentary',
-              'social commentary','economics','finance','technology','startups','business'],
-      penalty: ['light','no thinking required','fun','celebrity','gossip','hot wings',
-                'compilation','challenge'],
+              'social commentary','economics','finance','technology','startups','business',
+              'inspiring','identity','unconventional','profound','smart'],
+      penalty: ['funny','fun','comedy','hilarious','light','laugh','witty','quirky','absurd',
+                'warm','relatable','cringe comedy','comedy-drama','panel show','hot wings',
+                'comedy talk show','celebrity','gossip','compilation','challenge',
+                'no thinking required','observational','clean comedy','crowd interaction',
+                'food comedy','feel-good','feel good'],
     },
     chill: {
       boost: ['warm','light','feel-good','gentle','scenic','calm','heartwarming','cozy',
               'nostalgic','nostalgia','family','feel good','optimism','uplifting','slice of life',
               'food','travel','street food','quiet','British countryside','lifestyle',
-              'budget travel','adventure','fun','relatable','friendship'],
+              'budget travel','adventure','fun','relatable','friendship','clean',
+              'feel-good','romantic','funny'],
       penalty: ['dark','intense','crime','serial killer','murder','thriller','gripping',
-                'shocking','psychological','corporate fraud','kidnapping','scam'],
+                'shocking','psychological','corporate fraud','kidnapping','scam',
+                'investigative','analytical'],
     },
   };
 
@@ -273,17 +281,12 @@ function computeMoodFit(content, mood) {
   const tags = content.tags;
   let score = 50; // start neutral
 
-  // Count boost and penalty tag hits
-  let boostHits = 0;
-  let penaltyHits = 0;
+  // Boost hits add points, penalty hits subtract — but penalty is lighter than before
+  // so content isn't brutally killed, just pushed down
   tags.forEach(tag => {
-    if (signals.boost.includes(tag)) boostHits++;
-    if (signals.penalty.includes(tag)) penaltyHits++;
+    if (signals.boost.includes(tag)) score += 12;
+    if (signals.penalty.includes(tag)) score -= 15;
   });
-
-  // Each boost hit adds ~12 points, each penalty subtracts ~20
-  score += boostHits * 12;
-  score -= penaltyHits * 20;
 
   return Math.max(0, Math.min(100, score));
 }
