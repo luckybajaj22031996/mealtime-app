@@ -389,8 +389,20 @@ function RecCard({ rec, index, isTopPick, onWatch, onFeedback }) {
     'JioHotstar': '#8B5CF6',
   };
 
+  const pColor = platformColor[rec.platform] || '#888';
+
+  const handleCardClick = (e) => {
+    // Don't trigger watch if clicking feedback buttons
+    if (e.target.closest('.rec-feedback')) return;
+    onWatch(rec);
+  };
+
   return (
-    <div className={`rec-card fade-up ${isTopPick ? 'top-pick' : ''}`} style={{ animationDelay: `${index * 0.07}s`, opacity: 0 }}>
+    <div
+      className={`rec-card fade-up ${isTopPick ? 'top-pick' : ''}`}
+      style={{ animationDelay: `${index * 0.07}s`, opacity: 0, '--platform-color': pColor }}
+      onClick={handleCardClick}
+    >
       {isTopPick && <div className="top-pick-badge">Top pick</div>}
       <div className="rec-card-top">
         <div className="rec-card-left">
@@ -398,7 +410,7 @@ function RecCard({ rec, index, isTopPick, onWatch, onFeedback }) {
           <div className="rec-info">
             <h3 className="rec-title">{rec.title}</h3>
             <div className="rec-meta">
-              <span className="rec-platform" style={{ color: platformColor[rec.platform] || '#888' }}>
+              <span className="rec-platform" style={{ color: pColor }}>
                 {rec.platform}
               </span>
               <span className="rec-dot">·</span>
@@ -408,7 +420,7 @@ function RecCard({ rec, index, isTopPick, onWatch, onFeedback }) {
             </div>
           </div>
         </div>
-        <button className="rec-watch-btn" onClick={() => onWatch(rec)} title="Watch now">▶</button>
+        <button className="rec-watch-btn" onClick={(e) => { e.stopPropagation(); onWatch(rec); }} title="Watch now">▶</button>
       </div>
       <p className="rec-reason">{rec._reason}</p>
       <div className="rec-card-footer">
