@@ -161,7 +161,7 @@ function scoreContent(content, profile, genreWeights) {
   const genreScore = Math.min(100, 50 + (genreWeights[content.genre] || 0) * 5);
   
   // Novelty: penalise recently watched
-  const recentHistory = (profile.history || []).slice(0, 14);
+  const recentHistory = (profile.history || []).slice(0, 20);
   const noveltyScore = recentHistory.includes(content.id) ? 0 : 100;
 
   // Feedback boost/penalty
@@ -184,7 +184,14 @@ function scoreContent(content, profile, genreWeights) {
 export function getRecommendations(profile, mood = null, count = 5, forAI = false) {
   if (!profile || !profile.completed) return [];
 
-  const genreWeights = deriveGenreWeights(profile.tagWeights || {});
+  // Always read fresh history/feedback from localStorage to avoid stale closures
+  let freshProfile = profile;
+  try {
+    const raw = localStorage.getItem('mealtime_profile');
+    if (raw) freshProfile = { ...profile, ...JSON.parse(raw) };
+  } catch {}
+
+  const genreWeights = deriveGenreWeights(freshProfile.tagWeights || {});
   
   // Apply mood override
   const moodGenreBoost = {
@@ -200,13 +207,16 @@ export function getRecommendations(profile, mood = null, count = 5, forAI = fals
   }
 
   // Filter by language
-  const filtered = CONTENT_DB.filter(c => languageMatch(c, profile.language));
+  const filtered = CONTENT_DB.filter(c => languageMatch(c, freshProfile.language));
 
   // Score all
-  const scored = filtered.map(c => scoreContent(c, profile, genreWeights));
+  const scored = filtered.map(c => scoreContent(c, freshProfile, genreWeights));
 
-  // Sort by score
-  scored.sort((a, b) => b._score - a._score);
+  // Sort by score — add small jitter so Refresh gives varied results
+  scored.sort((a, b) => {
+    const jitter = Math.random() * 6 - 3; // ±3 point random nudge
+    return (b._score + jitter) - a._score;
+  });
 
   if (forAI) return scored.slice(0, 15); // top 15 candidates for AI to pick from
   return scored.slice(0, count);

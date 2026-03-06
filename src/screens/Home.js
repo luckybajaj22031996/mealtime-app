@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUserStore } from '../store/userStore';
 import { getRecommendations, buildReasonLine } from '../engine/scorer';
@@ -15,30 +15,45 @@ const MOODS = [
 
 export default function Home() {
   const navigate = useNavigate();
-  const { profile, settings, addToHistory, setFeedback } = useUserStore();
+  const { profile, settings, setSettings, addToHistory, setFeedback } = useUserStore();
   const [mood, setMood] = useState('anything');
   const [recs, setRecs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [aiUsed, setAiUsed] = useState(false);
 
+  // Use refs to avoid stale closures — feedback changes shouldn't retrigger loadRecs
+  const profileRef = useRef(profile);
+  const settingsRef = useRef(settings);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
   const loadRecs = useCallback(async (selectedMood) => {
+    const currentProfile = profileRef.current;
+    const currentSettings = settingsRef.current;
+
     setLoading(true);
     setError('');
     setAiUsed(false);
 
-    const candidates = getRecommendations(profile, selectedMood, 5, settings.aiEnabled && settings.apiKey);
+    const useAI = currentSettings.aiEnabled && currentSettings.apiKey;
+    const candidates = getRecommendations(currentProfile, selectedMood, 5, useAI);
 
-    if (settings.aiEnabled && settings.apiKey && candidates.length >= 5) {
+    if (useAI && candidates.length >= 5) {
       try {
-        const aiPicks = await getAIRecommendations(settings.apiKey, candidates, profile, selectedMood);
+        const aiPicks = await getAIRecommendations(currentSettings.apiKey, candidates, currentProfile, selectedMood);
         const enriched = aiPicks.map(pick => {
           const content = CONTENT_DB.find(c => c.id === pick.id);
-          return content ? { ...content, _reason: pick.reason, _score: candidates.find(c=>c.id===pick.id)?._score || 0 } : null;
+          return content ? { ...content, _reason: pick.reason, _score: candidates.find(c => c.id === pick.id)?._score || 0 } : null;
         }).filter(Boolean);
 
         if (enriched.length >= 3) {
-          setRecs(enriched.slice(0, 5));
+          // Reattach persisted feedback from profile
+          const withFeedback = enriched.slice(0, 5).map(r => ({
+            ...r,
+            _userFeedback: (currentProfile.feedback || {})[r.id] || null,
+          }));
+          setRecs(withFeedback);
           setAiUsed(true);
           setLoading(false);
           return;
@@ -51,21 +66,27 @@ export default function Home() {
     // Hardcoded fallback
     const withReasons = candidates.map(c => ({
       ...c,
-      _reason: buildReasonLine(c, profile),
+      _reason: buildReasonLine(c, currentProfile),
+      _userFeedback: (currentProfile.feedback || {})[c.id] || null,
     }));
     setRecs(withReasons);
     setLoading(false);
-  }, [profile, settings]);
+  }, []); // no deps — uses refs internally so feedback changes don't retrigger
 
+  // Only reload when mood changes or explicit refresh
   useEffect(() => {
     loadRecs(mood);
   }, [mood, loadRecs]);
 
-  const handleMoodChange = (newMood) => {
-    setMood(newMood);
-  };
-
   const handleRefresh = () => loadRecs(mood);
+
+  const handleMoodChange = (newMood) => setMood(newMood);
+
+  const handleToggleAI = () => {
+    setSettings({ aiEnabled: !settings.aiEnabled });
+    // Reload recs after toggle — give settings ref time to update
+    setTimeout(() => loadRecs(mood), 50);
+  };
 
   const handleWatch = (content) => {
     addToHistory(content.id);
@@ -73,9 +94,12 @@ export default function Home() {
   };
 
   const handleFeedback = (contentId, value) => {
-    setFeedback(contentId, value);
+    const newValue = value;
+    // Persist to store
+    setFeedback(contentId, newValue);
+    // Update local recs state only — no reload
     setRecs(prev => prev.map(r =>
-      r.id === contentId ? { ...r, _userFeedback: value } : r
+      r.id === contentId ? { ...r, _userFeedback: newValue } : r
     ));
   };
 
@@ -91,11 +115,24 @@ export default function Home() {
       {/* Header */}
       <header className="home-header">
         <div className="home-logo">🍽 MealTime</div>
-        <button className="home-settings-btn" onClick={() => navigate('/settings')}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
+        <div className="home-header-right">
+          {/* AI toggle in header */}
+          <div className="home-ai-toggle">
+            <span className="home-ai-label">AI</span>
+            <button
+              className={`toggle-small ${settings.aiEnabled && settings.apiKey ? 'on' : ''}`}
+              onClick={handleToggleAI}
+              title={settings.aiEnabled ? 'AI mode on' : 'AI mode off — add key in Settings'}
+            >
+              <span className="toggle-small-thumb" />
+            </button>
+          </div>
+          <button className="home-settings-btn" onClick={() => navigate('/settings')}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        </div>
       </header>
 
       {/* Greeting */}
@@ -129,7 +166,7 @@ export default function Home() {
       <div className="home-recs-section">
         <div className="home-recs-header">
           <h2 className="home-recs-title">
-            {loading ? 'Finding your picks…' : `5 picks for this meal`}
+            {loading ? 'Finding your picks…' : '5 picks for this meal'}
           </h2>
           {!loading && (
             <button className="home-refresh-btn" onClick={handleRefresh}>
@@ -185,10 +222,12 @@ function RecCard({ rec, index, onWatch, onFeedback }) {
   const platformColor = {
     'Netflix': '#E50914',
     'Prime Video': '#00A8E0',
-    'SonyLIV': '#00208A',
-    'Disney+ Hotstar': '#1A0C4E',
-    'Apple TV+': '#555',
+    'SonyLIV': '#4A90E2',
+    'Disney+ Hotstar': '#8B5CF6',
+    'Apple TV+': '#888',
     'YouTube': '#FF0000',
+    'BBC/Streaming': '#888',
+    'JioHotstar': '#8B5CF6',
   };
 
   return (
@@ -202,24 +241,17 @@ function RecCard({ rec, index, onWatch, onFeedback }) {
           <div className="rec-info">
             <h3 className="rec-title">{rec.title}</h3>
             <div className="rec-meta">
-              <span
-                className="rec-platform"
-                style={{ color: platformColor[rec.platform] || '#888' }}
-              >{rec.platform}</span>
+              <span className="rec-platform" style={{ color: platformColor[rec.platform] || '#888' }}>
+                {rec.platform}
+              </span>
               <span className="rec-dot">·</span>
               <span className="rec-duration">{rec.duration} min</span>
               <span className="rec-dot">·</span>
-              <span className="rec-genre">{genreEmoji[rec.genre]} {rec.genre}</span>
+              <span className="rec-genre">{genreEmoji[rec.genre]}</span>
             </div>
           </div>
         </div>
-        <button
-          className="rec-watch-btn"
-          onClick={() => onWatch(rec)}
-          title="Watch now"
-        >
-          ▶
-        </button>
+        <button className="rec-watch-btn" onClick={() => onWatch(rec)} title="Watch now">▶</button>
       </div>
 
       <p className="rec-reason">{rec._reason}</p>
