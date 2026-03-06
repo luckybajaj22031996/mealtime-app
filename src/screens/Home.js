@@ -18,18 +18,17 @@ export default function Home() {
   const { profile, settings, setSettings, addToHistory, setFeedback, startSession, setLastMood, clearLastWatched } = useUserStore();
   const [mood, setMood] = useState(profile.lastMood || 'anything');
   const [recs, setRecs] = useState(() => {
-    // Restore cached recs on mount — prevents reload on Settings→Home navigation
     try {
-      const cached = sessionStorage.getItem('mealtime_recs');
+      const cached = sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'anything'));
       return cached ? JSON.parse(cached) : [];
     } catch { return []; }
   });
   const [loading, setLoading] = useState(() => {
-    try { return !sessionStorage.getItem('mealtime_recs'); } catch { return true; }
+    try { return !sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'anything')); } catch { return true; }
   });
   const [error, setError] = useState('');
   const [aiUsed, setAiUsed] = useState(() => {
-    try { return sessionStorage.getItem('mealtime_ai_used') === 'true'; } catch { return false; }
+    try { return sessionStorage.getItem('mealtime_ai_' + (profile.lastMood || 'anything')) === 'true'; } catch { return false; }
   });
   const [showPostWatch, setShowPostWatch] = useState(false);
 
@@ -103,8 +102,7 @@ export default function Home() {
           setRecs(finalRecs);
           setAiUsed(true);
           setLoading(false);
-          // Cache for navigation persistence
-          try { sessionStorage.setItem('mealtime_recs', JSON.stringify(finalRecs)); sessionStorage.setItem('mealtime_ai_used', 'true'); } catch {}
+          try { sessionStorage.setItem('mealtime_recs_' + selectedMood, JSON.stringify(finalRecs)); sessionStorage.setItem('mealtime_ai_' + selectedMood, 'true'); } catch {}
           return;
         }
       } catch (e) {
@@ -119,8 +117,7 @@ export default function Home() {
     }));
     setRecs(withReasons);
     setLoading(false);
-    // Cache for navigation persistence
-    try { sessionStorage.setItem('mealtime_recs', JSON.stringify(withReasons)); sessionStorage.setItem('mealtime_ai_used', 'false'); } catch {}
+    try { sessionStorage.setItem('mealtime_recs_' + selectedMood, JSON.stringify(withReasons)); sessionStorage.setItem('mealtime_ai_' + selectedMood, 'false'); } catch {}
   }, []);
 
   // Only load fresh recs if we don't have cached ones
@@ -135,17 +132,26 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mood change always triggers fresh recs
+  // Mood change: restore from cache if available, otherwise load fresh
   const prevMood = useRef(mood);
   useEffect(() => {
     if (prevMood.current !== mood) {
       prevMood.current = mood;
+      try {
+        const cached = sessionStorage.getItem('mealtime_recs_' + mood);
+        if (cached) {
+          setRecs(JSON.parse(cached));
+          setAiUsed(sessionStorage.getItem('mealtime_ai_' + mood) === 'true');
+          setLoading(false);
+          return;
+        }
+      } catch {}
       loadRecs(mood);
     }
   }, [mood, loadRecs]);
 
   const handleRefresh = () => {
-    try { sessionStorage.removeItem('mealtime_recs'); } catch {}
+    try { sessionStorage.removeItem('mealtime_recs_' + mood); sessionStorage.removeItem('mealtime_ai_' + mood); } catch {}
     loadRecs(mood);
   };
 
