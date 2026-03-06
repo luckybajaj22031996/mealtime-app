@@ -65,6 +65,13 @@ export function UserProvider({ children }) {
 
   const resetProfile = useCallback(() => {
     localStorage.removeItem('mealtime_profile');
+    // Clear all cached recommendations so stale recs from old profile don't persist
+    try {
+      ['anything','laugh','think','chill'].forEach(m => {
+        sessionStorage.removeItem('mealtime_recs_' + m);
+        sessionStorage.removeItem('mealtime_ai_' + m);
+      });
+    } catch {}
     setProfileState({ ...DEFAULT_PROFILE });
   }, []);
 

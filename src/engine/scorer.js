@@ -134,9 +134,20 @@ export function deriveGenreWeights(tagWeights) {
 function durationFitScore(contentDuration, mealDuration) {
   const targets = { under15: 12, '15-25': 20, '25-35': 30, '35-45': 40 };
   const target = targets[mealDuration] || 25;
-  const diff = Math.abs(contentDuration - target);
-  const sigma = 10;
-  return Math.round(100 * Math.exp(-0.5 * (diff / sigma) ** 2));
+  const diff = contentDuration - target; // positive = too long, negative = too short
+
+  // Asymmetric: content shorter than meal is less of a problem than content longer than meal
+  // Too short: you can watch another one. Too long: you can't finish it.
+  if (diff >= 0) {
+    // Content is longer than meal window — penalise with sigma=10
+    const sigma = 10;
+    return Math.round(100 * Math.exp(-0.5 * (diff / sigma) ** 2));
+  } else {
+    // Content is shorter than meal window — gentler penalty with sigma=18
+    // A 6-min video for a 30-min meal scores ~50 instead of ~6
+    const sigma = 18;
+    return Math.round(100 * Math.exp(-0.5 * (diff / sigma) ** 2));
+  }
 }
 
 // Tag match — respects negative weights now
