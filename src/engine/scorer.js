@@ -182,17 +182,21 @@ function applyFeedbackToTagWeights(baseWeights, feedback) {
 }
 
 // Scoring — rebalanced weights
-function scoreContent(content, profile, genreWeights, enrichedTagWeights) {
+function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) {
   const qualityWeight = 0.15;
-  const durationWeight = 0.25;
-  const tagWeight = 0.30;
-  const genreWeight = 0.15;
+  const durationWeight = 0.20;
+  const tagWeight = 0.25;
+  const genreWeight = 0.10;
   const noveltyWeight = 0.15;
+  const moodWeight = 0.15;   // new: mood fit based on tags
 
   const qualityScore = content.qualityScore;
   const durScore = durationFitScore(content.duration, profile.mealDuration);
   const tagScore = tagMatchScore(content, enrichedTagWeights);
   const genreScore = genreWeights[content.genre] ?? 50;
+
+  // Mood fit — scored per content based on its actual tags, not just genre
+  const moodScore = computeMoodFit(content, mood);
 
   // Novelty — graduated penalty, not binary
   const history = (profile.history || []);
@@ -217,6 +221,7 @@ function scoreContent(content, profile, genreWeights, enrichedTagWeights) {
     tagScore * tagWeight +
     genreScore * genreWeight +
     noveltyScore * noveltyWeight +
+    moodScore * moodWeight +
     feedbackBoost
   );
 
@@ -227,7 +232,90 @@ function scoreContent(content, profile, genreWeights, enrichedTagWeights) {
     _tagScore: tagScore,
     _genreScore: genreScore,
     _noveltyScore: noveltyScore,
+    _moodScore: moodScore,
   };
+}
+
+// Tag-based mood scoring — each content piece scored 0-100 for mood fit
+function computeMoodFit(content, mood) {
+  if (!mood || mood === 'anything') return 50; // neutral
+
+  // Tags that strongly signal each mood
+  const moodSignals = {
+    laugh: {
+      boost: ['funny','fun','comedy','hilarious','light','laugh','witty','cringe comedy',
+              'comedy-drama','quirky','absurd','satire','dry humour','sharp','warm',
+              'panel show','hot wings','comedy talk show','celebrity','relatable'],
+      penalty: ['dark','intense','crime','serial killer','murder','gripping','thriller',
+                'psychological','shocking','investigative','kidnapping','corporate fraud'],
+    },
+    think: {
+      boost: ['educational','informative','science','explained','history','philosophy',
+              'mind-blowing','fascinating','thought-provoking','investigative','analytical',
+              'gripping','intense','spy','thriller','drama','psychological','documentary',
+              'social commentary','economics','finance','technology','startups','business'],
+      penalty: ['light','no thinking required','fun','celebrity','gossip','hot wings',
+                'compilation','challenge'],
+    },
+    chill: {
+      boost: ['warm','light','feel-good','gentle','scenic','calm','heartwarming','cozy',
+              'nostalgic','nostalgia','family','feel good','optimism','uplifting','slice of life',
+              'food','travel','street food','quiet','British countryside','lifestyle',
+              'budget travel','adventure','fun','relatable','friendship'],
+      penalty: ['dark','intense','crime','serial killer','murder','thriller','gripping',
+                'shocking','psychological','corporate fraud','kidnapping','scam'],
+    },
+  };
+
+  const signals = moodSignals[mood];
+  if (!signals) return 50;
+
+  const tags = content.tags;
+  let score = 50; // start neutral
+
+  // Count boost and penalty tag hits
+  let boostHits = 0;
+  let penaltyHits = 0;
+  tags.forEach(tag => {
+    if (signals.boost.includes(tag)) boostHits++;
+    if (signals.penalty.includes(tag)) penaltyHits++;
+  });
+
+  // Each boost hit adds ~12 points, each penalty subtracts ~20
+  score += boostHits * 12;
+  score -= penaltyHits * 20;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+// Hard exclusion — only truly contradictory content, checked per-item
+function isMoodContradiction(content, mood) {
+  if (!mood || mood === 'anything') return false;
+
+  const tags = content.tags;
+
+  // laugh: exclude content that is primarily dark/crime with NO funny element
+  if (mood === 'laugh') {
+    const hasDark = tags.some(t => ['dark','serial killer','murder','kidnapping','shocking','crime'].includes(t));
+    const hasFunny = tags.some(t => ['funny','fun','comedy','hilarious','light','quirky','witty','warm'].includes(t));
+    if (hasDark && !hasFunny) return true;
+  }
+
+  // think: exclude content that is purely mindless entertainment with NO substance
+  if (mood === 'think') {
+    const isMindless = tags.some(t => ['no thinking required','compilation','challenge','hot wings'].includes(t));
+    const hasSubstance = tags.some(t => ['educational','informative','business','science','history','inspiring','startups'].includes(t));
+    if (isMindless && !hasSubstance) return true;
+  }
+
+  // chill: exclude content that is primarily intense/stressful
+  if (mood === 'chill') {
+    const hasIntense = tags.some(t => ['intense','serial killer','murder','kidnapping','shocking','gripping','thriller'].includes(t));
+    const hasCalm = tags.some(t => ['warm','light','gentle','fun','funny','scenic','heartwarming','romantic','feel-good'].includes(t));
+    if (hasIntense && !hasCalm) return true;
+  }
+
+  return false;
 }
 
 // Weighted reservoir sampling — variety on refresh without pure randomness
@@ -275,35 +363,13 @@ export function getRecommendations(profile, mood = null, count = 5, forAI = fals
 
   const genreWeights = deriveGenreWeights(enrichedTagWeights);
 
-  // Mood boosts and exclusions
-  const moodGenreBoost = {
-    laugh: { 'Comedy / Sitcom': 30, 'Stand-up Comedy': 30, 'Reality / Talk Show': 10 },
-    think: { 'True Crime / Documentary': 30, 'Drama': 20 },
-    chill: { 'Travel / Lifestyle': 25, 'Reality / Talk Show': 20, 'Comedy / Sitcom': 15 },
-    anything: {},
-  };
-
-  const moodExcludeGenres = {
-    laugh: ['True Crime / Documentary', 'Drama'],
-    think: ['Travel / Lifestyle', 'Reality / Talk Show'],
-    chill: ['True Crime / Documentary', 'Drama'],
-    anything: [],
-  };
-
-  if (mood && moodGenreBoost[mood]) {
-    Object.entries(moodGenreBoost[mood]).forEach(([genre, boost]) => {
-      genreWeights[genre] = Math.min(100, (genreWeights[genre] || 0) + boost);
-    });
-  }
-
-  const excludedGenres = (mood && moodExcludeGenres[mood]) || [];
-
+  // Filter by language and per-item mood contradiction (not genre-level exclusion)
   const filtered = CONTENT_DB.filter(c =>
     languageMatch(c, freshProfile.language) &&
-    !excludedGenres.includes(c.genre)
+    !isMoodContradiction(c, mood)
   );
 
-  const scored = filtered.map(c => scoreContent(c, freshProfile, genreWeights, enrichedTagWeights));
+  const scored = filtered.map(c => scoreContent(c, freshProfile, genreWeights, enrichedTagWeights, mood));
   scored.sort((a, b) => b._score - a._score);
 
   if (forAI) return scored.slice(0, 15);
