@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUserStore } from '../store/userStore';
+import { useUserStore, getMealContext } from '../store/userStore';
 import { getRecommendations, buildReasonLine } from '../engine/scorer';
-import { getAIRecommendations } from '../engine/claudeAPI';
-import { validateApiKey } from '../engine/claudeAPI';
+import { getAIRecommendations, validateApiKey } from '../engine/claudeAPI';
 import { CONTENT_DB } from '../data/contentDB';
 import './Home.css';
 
@@ -16,24 +15,46 @@ const MOODS = [
 
 export default function Home() {
   const navigate = useNavigate();
-  const { profile, settings, setSettings, addToHistory, setFeedback } = useUserStore();
-  const [mood, setMood] = useState('anything');
+  const { profile, settings, setSettings, addToHistory, setFeedback, startSession, setLastMood, clearLastWatched } = useUserStore();
+  const [mood, setMood] = useState(profile.lastMood || 'anything');
   const [recs, setRecs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [aiUsed, setAiUsed] = useState(false);
+  const [showPostWatch, setShowPostWatch] = useState(false);
 
-  // AI key input state — inline on home page
+  // AI key input state
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [keyInput, setKeyInput] = useState('');
   const [keyValidating, setKeyValidating] = useState(false);
-  const [keyStatus, setKeyStatus] = useState(''); // 'valid' | 'invalid' | ''
+  const [keyStatus, setKeyStatus] = useState('');
 
-  // Refs so loadRecs never has stale closures
+  // Refs for fresh data in callbacks
   const profileRef = useRef(profile);
   const settingsRef = useRef(settings);
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
+
+  // Meal context
+  const mealCtx = getMealContext();
+
+  // Track session on mount
+  useEffect(() => {
+    startSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Check for post-watch feedback on focus return
+  useEffect(() => {
+    const handleFocus = () => {
+      const current = profileRef.current;
+      if (current.lastWatched) {
+        setShowPostWatch(true);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
 
   const loadRecs = useCallback(async (selectedMood, overrideSettings) => {
     const currentProfile = profileRef.current;
@@ -85,18 +106,18 @@ export default function Home() {
 
   const handleRefresh = () => loadRecs(mood);
 
-  const handleMoodChange = (newMood) => setMood(newMood);
+  const handleMoodChange = (newMood) => {
+    setMood(newMood);
+    setLastMood(newMood);
+  };
 
-  // Toggle AI — if no key saved, show inline input instead of just flipping
   const handleToggleAI = () => {
     if (settings.aiEnabled) {
-      // Turn off
       setSettings({ aiEnabled: false });
       setShowKeyInput(false);
       setKeyStatus('');
       setTimeout(() => loadRecs(mood), 50);
     } else {
-      // Turn on — show key input if no key saved yet
       if (settings.apiKey) {
         setSettings({ aiEnabled: true });
         setTimeout(() => loadRecs(mood, { ...settingsRef.current, aiEnabled: true }), 50);
@@ -136,14 +157,25 @@ export default function Home() {
     ));
   };
 
-  const greeting = () => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 17) return 'Good afternoon';
-    return 'Good evening';
+  // Post-watch feedback handlers
+  const handlePostWatchFeedback = (value) => {
+    if (profile.lastWatched) {
+      setFeedback(profile.lastWatched, value);
+      setRecs(prev => prev.map(r =>
+        r.id === profile.lastWatched ? { ...r, _userFeedback: value } : r
+      ));
+    }
+    clearLastWatched();
+    setShowPostWatch(false);
+  };
+
+  const dismissPostWatch = () => {
+    clearLastWatched();
+    setShowPostWatch(false);
   };
 
   const aiActive = settings.aiEnabled && settings.apiKey;
+  const lastWatchedContent = profile.lastWatched ? CONTENT_DB.find(c => c.id === profile.lastWatched) : null;
 
   return (
     <div className="home-root noise">
@@ -169,6 +201,18 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {/* Post-watch feedback prompt */}
+      {showPostWatch && lastWatchedContent && (
+        <div className="post-watch-prompt fade-in">
+          <p className="post-watch-text">How was <strong>{lastWatchedContent.title}</strong>?</p>
+          <div className="post-watch-actions">
+            <button className="post-watch-btn up" onClick={() => handlePostWatchFeedback('up')}>👍 Loved it</button>
+            <button className="post-watch-btn down" onClick={() => handlePostWatchFeedback('down')}>👎 Not for me</button>
+            <button className="post-watch-btn skip" onClick={dismissPostWatch}>Skip</button>
+          </div>
+        </div>
+      )}
 
       {/* Inline API key input */}
       {showKeyInput && (
@@ -202,9 +246,9 @@ export default function Home() {
         </div>
       )}
 
-      {/* Greeting */}
+      {/* Greeting — meal-context aware */}
       <div className="home-greeting fade-up">
-        <p className="home-greeting-text">{greeting()}. What's the vibe?</p>
+        <p className="home-greeting-text">{mealCtx.greeting}. What's the vibe?</p>
       </div>
 
       {/* Mood filter */}
@@ -261,6 +305,7 @@ export default function Home() {
                 key={rec.id}
                 rec={rec}
                 index={idx}
+                isTopPick={idx === 0}
                 onWatch={handleWatch}
                 onFeedback={handleFeedback}
               />
@@ -272,7 +317,7 @@ export default function Home() {
   );
 }
 
-function RecCard({ rec, index, onWatch, onFeedback }) {
+function RecCard({ rec, index, isTopPick, onWatch, onFeedback }) {
   const feedback = rec._userFeedback;
 
   const genreEmoji = {
@@ -296,7 +341,8 @@ function RecCard({ rec, index, onWatch, onFeedback }) {
   };
 
   return (
-    <div className="rec-card fade-up" style={{ animationDelay: `${index * 0.07}s`, opacity: 0 }}>
+    <div className={`rec-card fade-up ${isTopPick ? 'top-pick' : ''}`} style={{ animationDelay: `${index * 0.07}s`, opacity: 0 }}>
+      {isTopPick && <div className="top-pick-badge">Top pick</div>}
       <div className="rec-card-top">
         <div className="rec-card-left">
           <div className="rec-index">{index + 1}</div>

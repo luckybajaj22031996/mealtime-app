@@ -409,3 +409,53 @@
   color: var(--text3);
 }
 .home-key-note a { color: var(--accent); text-decoration: none; }
+
+/* Post-watch feedback prompt */
+.post-watch-prompt {
+  background: var(--bg3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin: 12px 0;
+}
+.post-watch-text {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.post-watch-text strong { color: var(--accent); }
+.post-watch-actions {
+  display: flex;
+  gap: 8px;
+}
+.post-watch-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.18s;
+  border: 1px solid var(--border);
+  background: var(--bg4);
+  color: var(--text2);
+  font-family: var(--font-body);
+}
+.post-watch-btn:hover { border-color: var(--border-hover); color: var(--text); }
+.post-watch-btn.up:hover { background: rgba(74,222,128,0.1); border-color: var(--green); color: var(--green); }
+.post-watch-btn.down:hover { background: rgba(248,113,113,0.1); border-color: var(--red); color: var(--red); }
+.post-watch-btn.skip { flex: 0.6; }
+
+/* Top pick badge */
+.rec-card.top-pick {
+  border-color: rgba(255,107,53,0.3);
+  background: linear-gradient(135deg, var(--card-bg) 0%, rgba(255,107,53,0.04) 100%);
+}
+.top-pick-badge {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}

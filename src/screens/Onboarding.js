@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUserStore } from '../store/userStore';
-import { ONBOARDING_CARDS, buildTagWeightsFromPicks } from '../engine/scorer';
+import { ONBOARDING_CARDS, buildTagWeightsFromPicks, deriveGenreWeights } from '../engine/scorer';
 import { buildTasteProfile } from '../engine/claudeAPI';
 import './Onboarding.css';
 
@@ -10,6 +10,7 @@ const STEPS = {
   CARDS: 'cards',
   QUESTIONS: 'questions',
   PROCESSING: 'processing',
+  REVEAL: 'reveal',
 };
 
 export default function Onboarding() {
@@ -22,6 +23,7 @@ export default function Onboarding() {
   const [language, setLanguage] = useState(null);
   const [vibe, setVibe] = useState(null);
   const [error, setError] = useState('');
+  const [builtProfile, setBuiltProfile] = useState(null);
 
   const totalCards = ONBOARDING_CARDS.length;
   const currentCard = ONBOARDING_CARDS[cardIndex];
@@ -52,7 +54,20 @@ export default function Onboarding() {
       }
     }
 
-    setProfile({
+    // Build a hardcoded summary if AI didn't generate one
+    if (!tasteProfile) {
+      const genreWeights = deriveGenreWeights(tagWeights);
+      const sorted = Object.entries(genreWeights).sort((a, b) => b[1] - a[1]);
+      const topGenres = sorted.slice(0, 3).map(([g]) => g.split(' / ')[0]);
+      const langLabel = language === 'hindi' ? 'Hindi' : language === 'english' ? 'English' : 'Hindi & English';
+      const vibeLabel = { laugh: 'comedy', interesting: 'thought-provoking content', decompress: 'light and easy content', whatever: 'a mix of everything' }[vibe] || 'a mix';
+      tasteProfile = {
+        summary: `You lean towards ${topGenres[0]} and ${topGenres[1]}, prefer ${langLabel} content, and default to ${vibeLabel} during meals.`,
+        topGenres: sorted.slice(0, 3).map(([g]) => g),
+      };
+    }
+
+    const profileData = {
       completed: true,
       picks,
       mealDuration,
@@ -62,14 +77,24 @@ export default function Onboarding() {
       tasteProfile,
       history: [],
       feedback: {},
-    });
+      sessionCount: 0,
+      lastMood: null,
+      lastSessionTime: null,
+      lastWatched: null,
+    };
 
+    setBuiltProfile(profileData);
+    setStep(STEPS.REVEAL);
+  };
+
+  const handleRevealDone = () => {
+    setProfile(builtProfile);
     navigate('/home');
   };
 
   const progress = step === STEPS.CARDS
-    ? Math.round((cardIndex / totalCards) * 100)
-    : step === STEPS.QUESTIONS ? 100 : 0;
+    ? Math.round(((cardIndex) / totalCards) * 100)
+    : step === STEPS.QUESTIONS || step === STEPS.REVEAL ? 100 : 0;
 
   return (
     <div className="onboarding-root noise">
@@ -96,6 +121,9 @@ export default function Onboarding() {
         />
       )}
       {step === STEPS.PROCESSING && <ProcessingScreen aiEnabled={settings.aiEnabled} />}
+      {step === STEPS.REVEAL && builtProfile && (
+        <RevealScreen profile={builtProfile} onContinue={handleRevealDone} />
+      )}
     </div>
   );
 }
@@ -150,6 +178,12 @@ function CardsScreen({ card, cardIndex, total, progress, onPick }) {
           onSelect={handleSelect}
         />
       </div>
+      <button
+        className="ob-skip-btn"
+        onClick={() => handleSelect('skip')}
+      >
+        Haven't seen either · Skip
+      </button>
     </div>
   );
 }
@@ -253,6 +287,32 @@ function ProcessingScreen({ aiEnabled }) {
         {aiEnabled ? 'Claude is building your taste profile…' : 'Building your taste profile…'}
       </p>
       <p className="ob-proc-sub">This takes a moment.</p>
+    </div>
+  );
+}
+
+function RevealScreen({ profile, onContinue }) {
+  const tp = profile.tasteProfile;
+  const topGenres = tp?.topGenres || [];
+
+  return (
+    <div className="ob-reveal fade-up">
+      <div className="ob-reveal-icon">✨</div>
+      <h2 className="ob-reveal-title">Here's what we got</h2>
+      {tp?.summary && (
+        <p className="ob-reveal-summary">{tp.summary}</p>
+      )}
+      {topGenres.length > 0 && (
+        <div className="ob-reveal-genres">
+          {topGenres.map(g => (
+            <span key={g} className="ob-reveal-genre-tag">{g}</span>
+          ))}
+        </div>
+      )}
+      <p className="ob-reveal-note">This gets better as you use it. Every thumbs up and thumbs down teaches it more about you.</p>
+      <button className="btn-primary ob-start-btn" onClick={onContinue}>
+        Show me my picks →
+      </button>
     </div>
   );
 }

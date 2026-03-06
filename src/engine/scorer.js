@@ -1,7 +1,6 @@
 import { CONTENT_DB } from '../data/contentDB';
 
 // Onboarding forced-choice weight mappings
-// Each pick = [winner_id, loser_id] -> adjust tag weights
 export const ONBOARDING_CARDS = [
   {
     id: 'card1',
@@ -72,6 +71,8 @@ export function buildTagWeightsFromPicks(picks, mealDuration, language, vibe) {
   picks.forEach(pick => {
     const card = ONBOARDING_CARDS.find(c => c.id === pick.cardId);
     if (!card) return;
+    // "skip" = no preference — don't adjust weights for this card
+    if (pick.choice === 'skip') return;
     const chosen = pick.choice === 'A' ? card.optionA : card.optionB;
     const rejected = pick.choice === 'A' ? card.optionB : card.optionA;
     bump(chosen.tags, 2);
@@ -100,7 +101,7 @@ export function buildTagWeightsFromPicks(picks, mealDuration, language, vibe) {
   return weights;
 }
 
-// Genre weights derived from tag weights
+// Genre weights — normalised to 0-100, averaged per tag to prevent tag-count bias
 export function deriveGenreWeights(tagWeights) {
   const genreTagMap = {
     'Comedy / Sitcom': ['comedy','warm','light','fun','funny','sitcom'],
@@ -113,30 +114,46 @@ export function deriveGenreWeights(tagWeights) {
 
   const gw = {};
   Object.entries(genreTagMap).forEach(([genre, tags]) => {
-    gw[genre] = tags.reduce((sum, tag) => sum + (tagWeights[tag] || 0), 0);
+    const sum = tags.reduce((s, tag) => s + (tagWeights[tag] || 0), 0);
+    gw[genre] = tags.length > 0 ? sum / tags.length : 0;
   });
+
+  // Normalise to 0-100
+  const values = Object.values(gw);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  Object.keys(gw).forEach(genre => {
+    gw[genre] = Math.round(((gw[genre] - min) / range) * 100);
+  });
+
   return gw;
 }
 
-// Duration fit score (0-100)
+// Duration fit — smooth Gaussian curve instead of step function
 function durationFitScore(contentDuration, mealDuration) {
-  const targets = { under15: 13, '15-25': 20, '25-35': 30, '35-45': 40 };
+  const targets = { under15: 12, '15-25': 20, '25-35': 30, '35-45': 40 };
   const target = targets[mealDuration] || 25;
   const diff = Math.abs(contentDuration - target);
-  if (diff <= 5) return 100;
-  if (diff <= 10) return 85;
-  if (diff <= 15) return 70;
-  if (diff <= 20) return 55;
-  return Math.max(0, 40 - diff);
+  const sigma = 10;
+  return Math.round(100 * Math.exp(-0.5 * (diff / sigma) ** 2));
 }
 
-// Tag match score (0-100)
+// Tag match — respects negative weights now
 function tagMatchScore(content, tagWeights) {
   if (!tagWeights || Object.keys(tagWeights).length === 0) return 50;
-  const totalWeight = content.tags.reduce((sum, tag) => {
-    return sum + Math.max(0, tagWeights[tag] || 0);
-  }, 0);
-  return Math.min(100, (totalWeight / content.tags.length) * 20);
+  let total = 0;
+  let count = 0;
+  content.tags.forEach(tag => {
+    const w = tagWeights[tag];
+    if (w !== undefined) {
+      total += w;
+      count++;
+    }
+  });
+  if (count === 0) return 40;
+  const avg = total / count;
+  return Math.max(0, Math.min(100, 50 + avg * 15));
 }
 
 // Language filter
@@ -147,26 +164,52 @@ function languageMatch(content, languagePref) {
   return true;
 }
 
-// Main scoring function
-function scoreContent(content, profile, genreWeights) {
-  const qualityWeight = 0.25;
+// Cross-content learning: feedback propagates to matching tags
+function applyFeedbackToTagWeights(baseWeights, feedback) {
+  const weights = { ...baseWeights };
+  const bump = (tags, delta) => {
+    tags.forEach(tag => { weights[tag] = (weights[tag] || 0) + delta; });
+  };
+
+  Object.entries(feedback).forEach(([contentId, value]) => {
+    const content = CONTENT_DB.find(c => c.id === contentId);
+    if (!content) return;
+    if (value === 'up') bump(content.tags, 0.5);
+    else if (value === 'down') bump(content.tags, -0.8);
+  });
+
+  return weights;
+}
+
+// Scoring — rebalanced weights
+function scoreContent(content, profile, genreWeights, enrichedTagWeights) {
+  const qualityWeight = 0.15;
   const durationWeight = 0.25;
-  const tagWeight = 0.25;
+  const tagWeight = 0.30;
   const genreWeight = 0.15;
-  const noveltyWeight = 0.10;
+  const noveltyWeight = 0.15;
 
   const qualityScore = content.qualityScore;
   const durScore = durationFitScore(content.duration, profile.mealDuration);
-  const tagScore = tagMatchScore(content, profile.tagWeights);
-  const genreScore = Math.min(100, 50 + (genreWeights[content.genre] || 0) * 5);
-  
-  // Novelty: penalise recently watched
-  const recentHistory = (profile.history || []).slice(0, 20);
-  const noveltyScore = recentHistory.includes(content.id) ? 0 : 100;
+  const tagScore = tagMatchScore(content, enrichedTagWeights);
+  const genreScore = genreWeights[content.genre] ?? 50;
 
-  // Feedback boost/penalty
+  // Novelty — graduated penalty, not binary
+  const history = (profile.history || []);
+  const historyIndex = history.indexOf(content.id);
+  let noveltyScore = 100;
+  if (historyIndex !== -1) {
+    if (historyIndex < 5) noveltyScore = 0;
+    else if (historyIndex < 10) noveltyScore = 15;
+    else if (historyIndex < 20) noveltyScore = 35;
+    else noveltyScore = 60;
+  }
+
+  // Feedback boost — reduced, let tag learning do the work
   const feedback = (profile.feedback || {})[content.id];
-  const feedbackBoost = feedback === 'up' ? 15 : feedback === 'down' ? -30 : 0;
+  let feedbackBoost = 0;
+  if (feedback === 'up') feedbackBoost = 10;
+  else if (feedback === 'down') feedbackBoost = -25;
 
   const total = (
     qualityScore * qualityWeight +
@@ -177,31 +220,69 @@ function scoreContent(content, profile, genreWeights) {
     feedbackBoost
   );
 
-  return { ...content, _score: Math.round(total), _durScore: durScore, _tagScore: tagScore };
+  return {
+    ...content,
+    _score: Math.round(total),
+    _durScore: durScore,
+    _tagScore: tagScore,
+    _genreScore: genreScore,
+    _noveltyScore: noveltyScore,
+  };
 }
 
-// Get top N candidates for AI or return final 5 for hardcoded mode
+// Weighted reservoir sampling — variety on refresh without pure randomness
+function weightedSample(items, count) {
+  if (items.length <= count) return [...items];
+
+  const remaining = [...items];
+  const selected = [];
+
+  for (let i = 0; i < count; i++) {
+    const minScore = Math.min(...remaining.map(r => r._score));
+    const weights = remaining.map(r => Math.exp((r._score - minScore) / 8));
+    const totalWeight = weights.reduce((s, w) => s + w, 0);
+
+    let rand = Math.random() * totalWeight;
+    let picked = 0;
+    for (let j = 0; j < weights.length; j++) {
+      rand -= weights[j];
+      if (rand <= 0) { picked = j; break; }
+    }
+
+    selected.push(remaining[picked]);
+    remaining.splice(picked, 1);
+  }
+
+  return selected;
+}
+
+// Main recommendation function
 export function getRecommendations(profile, mood = null, count = 5, forAI = false) {
   if (!profile || !profile.completed) return [];
 
-  // Always read fresh history/feedback from localStorage to avoid stale closures
+  // Fresh profile from localStorage
   let freshProfile = profile;
   try {
     const raw = localStorage.getItem('mealtime_profile');
     if (raw) freshProfile = { ...profile, ...JSON.parse(raw) };
   } catch {}
 
-  const genreWeights = deriveGenreWeights(freshProfile.tagWeights || {});
-  
-  // Apply mood override — boost matching genres AND hard-exclude wrong ones
+  // Enrich tag weights with cross-content feedback learning
+  const enrichedTagWeights = applyFeedbackToTagWeights(
+    freshProfile.tagWeights || {},
+    freshProfile.feedback || {}
+  );
+
+  const genreWeights = deriveGenreWeights(enrichedTagWeights);
+
+  // Mood boosts and exclusions
   const moodGenreBoost = {
-    laugh: { 'Comedy / Sitcom': 40, 'Stand-up Comedy': 35, 'Reality / Talk Show': 10 },
-    think: { 'True Crime / Documentary': 35, 'Drama': 20 },
-    chill: { 'Travel / Lifestyle': 30, 'Reality / Talk Show': 20, 'Comedy / Sitcom': 15 },
+    laugh: { 'Comedy / Sitcom': 30, 'Stand-up Comedy': 30, 'Reality / Talk Show': 10 },
+    think: { 'True Crime / Documentary': 30, 'Drama': 20 },
+    chill: { 'Travel / Lifestyle': 25, 'Reality / Talk Show': 20, 'Comedy / Sitcom': 15 },
     anything: {},
   };
 
-  // Genres that should never appear for a given mood
   const moodExcludeGenres = {
     laugh: ['True Crime / Documentary', 'Drama'],
     think: ['Travel / Lifestyle', 'Reality / Talk Show'],
@@ -211,59 +292,91 @@ export function getRecommendations(profile, mood = null, count = 5, forAI = fals
 
   if (mood && moodGenreBoost[mood]) {
     Object.entries(moodGenreBoost[mood]).forEach(([genre, boost]) => {
-      genreWeights[genre] = (genreWeights[genre] || 0) + boost;
+      genreWeights[genre] = Math.min(100, (genreWeights[genre] || 0) + boost);
     });
   }
 
-  // Apply exclusions — filter out content from wrong genres entirely
   const excludedGenres = (mood && moodExcludeGenres[mood]) || [];
 
-  // Filter by language and excluded genres
   const filtered = CONTENT_DB.filter(c =>
     languageMatch(c, freshProfile.language) &&
     !excludedGenres.includes(c.genre)
   );
 
-  // Score all
-  const scored = filtered.map(c => scoreContent(c, freshProfile, genreWeights));
+  const scored = filtered.map(c => scoreContent(c, freshProfile, genreWeights, enrichedTagWeights));
+  scored.sort((a, b) => b._score - a._score);
 
-  // Sort by score — add small jitter so Refresh gives varied results
-  scored.sort((a, b) => {
-    const jitter = Math.random() * 6 - 3; // ±3 point random nudge
-    return (b._score + jitter) - a._score;
-  });
+  if (forAI) return scored.slice(0, 15);
 
-  if (forAI) return scored.slice(0, 15); // top 15 candidates for AI to pick from
-  return scored.slice(0, count);
+  // Weighted sampling from top 12 for variety
+  const pool = scored.slice(0, Math.min(12, scored.length));
+  const selected = weightedSample(pool, count);
+  selected.sort((a, b) => b._score - a._score);
+  return selected;
 }
 
-// Hardcoded reason line from score components
+// Reason lines — personal, not metadata
 export function buildReasonLine(content, profile) {
+  const feedback = (profile.feedback || {})[content.id];
+  const tagWeights = profile.tagWeights || {};
+
+  if (feedback === 'up') {
+    return "You liked this before — still a great pick";
+  }
+
+  // Find strongest user-preference tag on this content
+  let bestTag = null;
+  let bestWeight = 0;
+  content.tags.forEach(tag => {
+    const w = tagWeights[tag] || 0;
+    if (w > bestWeight) { bestWeight = w; bestTag = tag; }
+  });
+
   const parts = [];
-  
-  // Genre label
-  const genreShort = {
-    'Comedy / Sitcom': 'Comedy',
-    'Stand-up Comedy': 'Stand-up',
-    'True Crime / Documentary': 'Documentary',
-    'Drama': 'Drama',
-    'Travel / Lifestyle': 'Travel',
-    'Reality / Talk Show': 'Reality',
-  };
-  parts.push(genreShort[content.genre] || content.genre);
 
-  // Duration bucket
-  if (content.duration <= 15) parts.push('Quick watch');
-  else if (content.duration <= 30) parts.push('Fits your meal');
-  else parts.push(`${content.duration} min`);
+  // Duration context
+  const dur = content.duration;
+  if (dur <= 15) parts.push('Quick one');
+  else if (dur <= 30) parts.push('Fits your meal');
+  else parts.push(dur + ' min — settle in');
 
-  // Quality signal
-  if (content.qualityScore >= 90) parts.push('Critically loved');
-  else if (content.qualityScore >= 80) parts.push('Highly rated');
+  // Taste-based reason
+  if (bestTag && bestWeight >= 2) {
+    const tagReasons = {
+      'warm': 'warm and easy to sink into',
+      'funny': 'guaranteed laughs',
+      'light': 'no brainpower needed',
+      'Indian': 'desi comfort content',
+      'gripping': 'gripping — hard to pause',
+      'educational': "you'll learn something new",
+      'emotional': 'hits you in the feels',
+      'adventure': 'pure energy and fun',
+      'nostalgic': 'nostalgia in the best way',
+      'quirky': 'weird in a good way',
+      'British': 'dry British humour done right',
+      'western': 'solid Western pick',
+      'dark': 'dark and compelling',
+      'business': 'scratches the business brain',
+      'celebrity': 'celebrity fun, no guilt',
+      'food': 'perfect to watch while eating',
+      'relatable': 'uncomfortably relatable',
+      'classic': 'a classic for a reason',
+      'friendship': 'friendship goals energy',
+    };
+    const reason = tagReasons[bestTag];
+    if (reason) parts.push(reason);
+  }
 
-  // Language
-  if (content.language === 'Hindi') parts.push('Hindi');
-  else if (content.language === 'English') parts.push('English');
+  if (parts.length < 2 && content.qualityScore >= 90) {
+    parts.push('universally loved');
+  }
 
-  return parts.join(' · ');
+  if (content.platform === 'YouTube') parts.push('free on YouTube');
+
+  if (parts.length === 0) {
+    parts.push(content.genre.split(' / ')[0]);
+    parts.push(content.duration + ' min');
+  }
+
+  return parts.slice(0, 3).join(' · ');
 }
