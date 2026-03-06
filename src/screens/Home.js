@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useUserStore } from '../store/userStore';
 import { getRecommendations, buildReasonLine } from '../engine/scorer';
 import { getAIRecommendations } from '../engine/claudeAPI';
+import { validateApiKey } from '../engine/claudeAPI';
 import { CONTENT_DB } from '../data/contentDB';
 import './Home.css';
 
@@ -22,15 +23,21 @@ export default function Home() {
   const [error, setError] = useState('');
   const [aiUsed, setAiUsed] = useState(false);
 
-  // Use refs to avoid stale closures — feedback changes shouldn't retrigger loadRecs
+  // AI key input state — inline on home page
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [keyInput, setKeyInput] = useState('');
+  const [keyValidating, setKeyValidating] = useState(false);
+  const [keyStatus, setKeyStatus] = useState(''); // 'valid' | 'invalid' | ''
+
+  // Refs so loadRecs never has stale closures
   const profileRef = useRef(profile);
   const settingsRef = useRef(settings);
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
-  const loadRecs = useCallback(async (selectedMood) => {
+  const loadRecs = useCallback(async (selectedMood, overrideSettings) => {
     const currentProfile = profileRef.current;
-    const currentSettings = settingsRef.current;
+    const currentSettings = overrideSettings || settingsRef.current;
 
     setLoading(true);
     setError('');
@@ -44,16 +51,16 @@ export default function Home() {
         const aiPicks = await getAIRecommendations(currentSettings.apiKey, candidates, currentProfile, selectedMood);
         const enriched = aiPicks.map(pick => {
           const content = CONTENT_DB.find(c => c.id === pick.id);
-          return content ? { ...content, _reason: pick.reason, _score: candidates.find(c => c.id === pick.id)?._score || 0 } : null;
+          return content ? {
+            ...content,
+            _reason: pick.reason,
+            _score: candidates.find(c => c.id === pick.id)?._score || 0,
+            _userFeedback: (currentProfile.feedback || {})[pick.id] || null,
+          } : null;
         }).filter(Boolean);
 
         if (enriched.length >= 3) {
-          // Reattach persisted feedback from profile
-          const withFeedback = enriched.slice(0, 5).map(r => ({
-            ...r,
-            _userFeedback: (currentProfile.feedback || {})[r.id] || null,
-          }));
-          setRecs(withFeedback);
+          setRecs(enriched.slice(0, 5));
           setAiUsed(true);
           setLoading(false);
           return;
@@ -63,7 +70,6 @@ export default function Home() {
       }
     }
 
-    // Hardcoded fallback
     const withReasons = candidates.map(c => ({
       ...c,
       _reason: buildReasonLine(c, currentProfile),
@@ -71,9 +77,8 @@ export default function Home() {
     }));
     setRecs(withReasons);
     setLoading(false);
-  }, []); // no deps — uses refs internally so feedback changes don't retrigger
+  }, []);
 
-  // Only reload when mood changes or explicit refresh
   useEffect(() => {
     loadRecs(mood);
   }, [mood, loadRecs]);
@@ -82,10 +87,41 @@ export default function Home() {
 
   const handleMoodChange = (newMood) => setMood(newMood);
 
+  // Toggle AI — if no key saved, show inline input instead of just flipping
   const handleToggleAI = () => {
-    setSettings({ aiEnabled: !settings.aiEnabled });
-    // Reload recs after toggle — give settings ref time to update
-    setTimeout(() => loadRecs(mood), 50);
+    if (settings.aiEnabled) {
+      // Turn off
+      setSettings({ aiEnabled: false });
+      setShowKeyInput(false);
+      setKeyStatus('');
+      setTimeout(() => loadRecs(mood), 50);
+    } else {
+      // Turn on — show key input if no key saved yet
+      if (settings.apiKey) {
+        setSettings({ aiEnabled: true });
+        setTimeout(() => loadRecs(mood, { ...settingsRef.current, aiEnabled: true }), 50);
+      } else {
+        setShowKeyInput(true);
+      }
+    }
+  };
+
+  const handleSaveKey = async () => {
+    if (!keyInput.trim()) return;
+    setKeyValidating(true);
+    setKeyStatus('');
+    const result = await validateApiKey(keyInput.trim());
+    setKeyValidating(false);
+    if (result.valid) {
+      const newSettings = { apiKey: keyInput.trim(), aiEnabled: true };
+      setSettings(newSettings);
+      setKeyStatus('valid');
+      setShowKeyInput(false);
+      setKeyInput('');
+      setTimeout(() => loadRecs(mood, { ...settingsRef.current, ...newSettings }), 50);
+    } else {
+      setKeyStatus('invalid');
+    }
   };
 
   const handleWatch = (content) => {
@@ -94,12 +130,9 @@ export default function Home() {
   };
 
   const handleFeedback = (contentId, value) => {
-    const newValue = value;
-    // Persist to store
-    setFeedback(contentId, newValue);
-    // Update local recs state only — no reload
+    setFeedback(contentId, value);
     setRecs(prev => prev.map(r =>
-      r.id === contentId ? { ...r, _userFeedback: newValue } : r
+      r.id === contentId ? { ...r, _userFeedback: value } : r
     ));
   };
 
@@ -110,30 +143,64 @@ export default function Home() {
     return 'Good evening';
   };
 
+  const aiActive = settings.aiEnabled && settings.apiKey;
+
   return (
     <div className="home-root noise">
       {/* Header */}
       <header className="home-header">
         <div className="home-logo">🍽 MealTime</div>
         <div className="home-header-right">
-          {/* AI toggle in header */}
           <div className="home-ai-toggle">
-            <span className="home-ai-label">AI</span>
+            <span className={`home-ai-label ${aiActive ? 'ai-on' : ''}`}>AI</span>
             <button
-              className={`toggle-small ${settings.aiEnabled && settings.apiKey ? 'on' : ''}`}
+              className={`toggle-small ${aiActive ? 'on' : ''}`}
               onClick={handleToggleAI}
-              title={settings.aiEnabled ? 'AI mode on' : 'AI mode off — add key in Settings'}
+              title={aiActive ? 'AI on — click to turn off' : 'Turn on AI mode'}
             >
               <span className="toggle-small-thumb" />
             </button>
           </div>
           <button className="home-settings-btn" onClick={() => navigate('/settings')}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
           </button>
         </div>
       </header>
+
+      {/* Inline API key input */}
+      {showKeyInput && (
+        <div className="home-key-panel fade-in">
+          <p className="home-key-title">Enter your Claude API key to enable AI mode</p>
+          <div className="home-key-row">
+            <input
+              type="password"
+              className="home-key-input"
+              placeholder="sk-ant-..."
+              value={keyInput}
+              onChange={e => setKeyInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveKey()}
+              autoFocus
+            />
+            <button
+              className="home-key-save"
+              onClick={handleSaveKey}
+              disabled={keyValidating || !keyInput.trim()}
+            >
+              {keyValidating ? '…' : 'Save'}
+            </button>
+            <button className="home-key-cancel" onClick={() => { setShowKeyInput(false); setKeyStatus(''); }}>
+              ✕
+            </button>
+          </div>
+          {keyStatus === 'invalid' && (
+            <p className="home-key-error">Invalid key — check and try again</p>
+          )}
+          <p className="home-key-note">Get your key at <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">console.anthropic.com</a></p>
+        </div>
+      )}
 
       {/* Greeting */}
       <div className="home-greeting fade-up">
@@ -169,9 +236,7 @@ export default function Home() {
             {loading ? 'Finding your picks…' : '5 picks for this meal'}
           </h2>
           {!loading && (
-            <button className="home-refresh-btn" onClick={handleRefresh}>
-              ↻ Refresh
-            </button>
+            <button className="home-refresh-btn" onClick={handleRefresh}>↻ Refresh</button>
           )}
         </div>
 
@@ -231,10 +296,7 @@ function RecCard({ rec, index, onWatch, onFeedback }) {
   };
 
   return (
-    <div
-      className="rec-card fade-up"
-      style={{ animationDelay: `${index * 0.07}s`, opacity: 0 }}
-    >
+    <div className="rec-card fade-up" style={{ animationDelay: `${index * 0.07}s`, opacity: 0 }}>
       <div className="rec-card-top">
         <div className="rec-card-left">
           <div className="rec-index">{index + 1}</div>
@@ -253,9 +315,7 @@ function RecCard({ rec, index, onWatch, onFeedback }) {
         </div>
         <button className="rec-watch-btn" onClick={() => onWatch(rec)} title="Watch now">▶</button>
       </div>
-
       <p className="rec-reason">{rec._reason}</p>
-
       <div className="rec-card-footer">
         <div className="rec-tags">
           {rec.tags.slice(0, 3).map(tag => (
@@ -266,12 +326,10 @@ function RecCard({ rec, index, onWatch, onFeedback }) {
           <button
             className={`rec-fb-btn ${feedback === 'up' ? 'active-up' : ''}`}
             onClick={() => onFeedback(rec.id, feedback === 'up' ? null : 'up')}
-            title="I liked this"
           >👍</button>
           <button
             className={`rec-fb-btn ${feedback === 'down' ? 'active-down' : ''}`}
             onClick={() => onFeedback(rec.id, feedback === 'down' ? null : 'down')}
-            title="Not for me"
           >👎</button>
         </div>
       </div>

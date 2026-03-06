@@ -5,56 +5,56 @@ import { CONTENT_DB } from '../data/contentDB';
 export const ONBOARDING_CARDS = [
   {
     id: 'card1',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Comedy style",
     optionA: { id: 'C004', title: 'Gullak', platform: 'SonyLIV', desc: 'Warm family comedy set in small-town UP', tags: ['warm','Indian','family','Hindi'] },
     optionB: { id: 'C026', title: 'The Office US', platform: 'Netflix', desc: 'Dry workplace cringe comedy', tags: ['western','dry humour','workplace','English'] },
   },
   {
     id: 'card2',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Drama tone",
     optionA: { id: 'D001', title: 'Scam 1992', platform: 'SonyLIV', desc: 'Gripping financial thriller based on true events', tags: ['gripping','plot-driven','intense','Indian'] },
     optionB: { id: 'D018', title: 'Fleabag', platform: 'Prime Video', desc: 'Intimate, sharp British dark comedy-drama', tags: ['character-driven','British','intimate','dark humour'] },
   },
   {
     id: 'card3',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Documentary style",
     optionA: { id: 'T001', title: 'House of Secrets: Burari', platform: 'Netflix', desc: 'Dark Indian true crime documentary', tags: ['dark','true crime','India','intense'] },
     optionB: { id: 'T014', title: 'Kurzgesagt: Why Humans Run the World', platform: 'YouTube', desc: 'Beautiful animated science explainer', tags: ['educational','animated','science','light'] },
   },
   {
     id: 'card4',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Stand-up style",
     optionA: { id: 'S001', title: 'Zakir Khan: Haq Se Single', platform: 'Prime Video', desc: 'Hindi, emotional, warm comedy about relationships', tags: ['Hindi','emotional','warm','Indian'] },
     optionB: { id: 'S013', title: 'John Mulaney: New in Town', platform: 'Netflix', desc: 'English, sharp storytelling comedy', tags: ['English','sharp','storytelling','western'] },
   },
   {
     id: 'card5',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Travel content",
     optionA: { id: 'TR005', title: 'Visa2Explore: Northeast India', platform: 'YouTube', desc: 'Practical Indian travel + food tour, Hindi', tags: ['Hindi','practical','India','food'] },
     optionB: { id: 'TR017', title: 'Yes Theory: Saying Yes 24 Hours', platform: 'YouTube', desc: 'High-energy adventure, English', tags: ['English','adventure','high energy','western'] },
   },
   {
     id: 'card6',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Reality content",
     optionA: { id: 'R001', title: 'Shark Tank India', platform: 'SonyLIV', desc: 'Business pitches, Indian entrepreneurs, Hindi', tags: ['business','informative','India','Hindi'] },
     optionB: { id: 'R011', title: 'Hot Ones: Shah Rukh Khan', platform: 'YouTube', desc: 'Celebrity interview, hot wings, pure fun', tags: ['entertainment','celebrity','fun','English'] },
   },
   {
     id: 'card7',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Duration comfort",
     optionA: { id: 'D001', title: 'A 42-min drama episode', platform: '', desc: 'Something immersive you get lost in', tags: ['long','immersive','commitment'] },
     optionB: { id: 'T013', title: 'A 6-min animated explainer', platform: '', desc: 'Quick, punchy — done before the meal', tags: ['short','quick','snack'] },
   },
   {
     id: 'card8',
-    question: "Pick one to watch right now",
+    question: "Which would you rather watch?",
     label: "Default mood",
     optionA: { id: 'mood_laugh', title: 'Something that makes me laugh', platform: '', desc: 'Comedy, light, fun energy', tags: ['comedy','light','fun','laugh'] },
     optionB: { id: 'mood_think', title: 'Something that makes me think', platform: '', desc: 'Documentary, drama, insight', tags: ['documentary','drama','insightful','think'] },
@@ -193,21 +193,36 @@ export function getRecommendations(profile, mood = null, count = 5, forAI = fals
 
   const genreWeights = deriveGenreWeights(freshProfile.tagWeights || {});
   
-  // Apply mood override
+  // Apply mood override — boost matching genres AND hard-exclude wrong ones
   const moodGenreBoost = {
-    laugh: { 'Comedy / Sitcom': 30, 'Stand-up Comedy': 25 },
-    think: { 'True Crime / Documentary': 25, 'Drama': 15 },
-    chill: { 'Travel / Lifestyle': 20, 'Reality / Talk Show': 15, 'Comedy / Sitcom': 10 },
+    laugh: { 'Comedy / Sitcom': 40, 'Stand-up Comedy': 35, 'Reality / Talk Show': 10 },
+    think: { 'True Crime / Documentary': 35, 'Drama': 20 },
+    chill: { 'Travel / Lifestyle': 30, 'Reality / Talk Show': 20, 'Comedy / Sitcom': 15 },
     anything: {},
   };
+
+  // Genres that should never appear for a given mood
+  const moodExcludeGenres = {
+    laugh: ['True Crime / Documentary', 'Drama'],
+    think: ['Travel / Lifestyle', 'Reality / Talk Show'],
+    chill: ['True Crime / Documentary', 'Drama'],
+    anything: [],
+  };
+
   if (mood && moodGenreBoost[mood]) {
     Object.entries(moodGenreBoost[mood]).forEach(([genre, boost]) => {
       genreWeights[genre] = (genreWeights[genre] || 0) + boost;
     });
   }
 
-  // Filter by language
-  const filtered = CONTENT_DB.filter(c => languageMatch(c, freshProfile.language));
+  // Apply exclusions — filter out content from wrong genres entirely
+  const excludedGenres = (mood && moodExcludeGenres[mood]) || [];
+
+  // Filter by language and excluded genres
+  const filtered = CONTENT_DB.filter(c =>
+    languageMatch(c, freshProfile.language) &&
+    !excludedGenres.includes(c.genre)
+  );
 
   // Score all
   const scored = filtered.map(c => scoreContent(c, freshProfile, genreWeights));
