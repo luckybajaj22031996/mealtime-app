@@ -60,7 +60,7 @@ export default function Onboarding() {
       const sorted = Object.entries(genreWeights).sort((a, b) => b[1] - a[1]);
       const topGenres = sorted.slice(0, 3).map(([g]) => g.split(' / ')[0]);
       const langLabel = language === 'hindi' ? 'Hindi' : language === 'english' ? 'English' : 'Hindi & English';
-      const vibeLabel = { laugh: 'comedy', interesting: 'thought-provoking content', decompress: 'light and easy content', whatever: 'a mix of everything' }[vibe] || 'a mix';
+      const vibeLabel = { laugh: 'comedy', think: 'thought-provoking content', chill: 'light and easy content', anything: 'a mix of everything' }[vibe] || 'a mix';
       tasteProfile = {
         summary: `You lean towards ${topGenres[0]} and ${topGenres[1]}, prefer ${langLabel} content, and default to ${vibeLabel} during meals.`,
         topGenres: sorted.slice(0, 3).map(([g]) => g),
@@ -78,7 +78,7 @@ export default function Onboarding() {
       history: [],
       feedback: {},
       sessionCount: 0,
-      lastMood: null,
+      lastMood: vibe,
       lastSessionTime: null,
       lastWatched: null,
     };
@@ -253,9 +253,9 @@ function QuestionsScreen({ mealDuration, language, vibe, setMealDuration, setLan
         <div className="ob-pill-group">
           {[
             { val: 'laugh', label: 'Make me laugh' },
-            { val: 'interesting', label: 'Something interesting' },
-            { val: 'decompress', label: 'Just decompress' },
-            { val: 'whatever', label: "Whatever's good" },
+            { val: 'think', label: 'Something interesting' },
+            { val: 'chill', label: 'Just decompress' },
+            { val: 'anything', label: "Whatever's good" },
           ].map(opt => (
             <button
               key={opt.val}

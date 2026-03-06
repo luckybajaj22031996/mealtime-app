@@ -91,10 +91,10 @@ export function buildTagWeightsFromPicks(picks, mealDuration, language, vibe) {
 
   // Vibe signal
   const vibeMap = {
-    decompress: ['light','fun','warm','comedy'],
-    interesting: ['educational','informative','insightful','think'],
-    laugh: ['comedy','funny','light','laugh'],
-    whatever: [],
+    chill: ['light','fun','warm','comedy','scenic','nostalgic','gentle'],
+    think: ['educational','informative','insightful','think','fascinating','science'],
+    laugh: ['comedy','funny','light','laugh','fun','relatable'],
+    anything: [],
   };
   bump(vibeMap[vibe] || [], 2);
 
