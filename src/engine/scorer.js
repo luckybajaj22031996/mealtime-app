@@ -238,40 +238,51 @@ function scoreContent(content, profile, genreWeights, enrichedTagWeights, mood) 
 
 // Tag-based mood scoring — each content piece scored 0-100 for mood fit
 function computeMoodFit(content, mood) {
-  if (!mood || mood === 'anything') return 50; // neutral
+  if (!mood || mood === 'anything') return 50;
 
-  // Tags that signal each mood — boost = good fit, penalty = bad fit
   const moodSignals = {
     laugh: {
       boost: ['funny','fun','comedy','hilarious','light','laugh','witty','cringe comedy',
               'comedy-drama','quirky','absurd','satire','dry humour','sharp','warm',
               'panel show','hot wings','comedy talk show','celebrity','relatable',
-              'observational','clean comedy','food comedy','crowd interaction'],
+              'observational','clean comedy','food comedy','crowd interaction',
+              'banter','self-aware','mockumentary','cringe'],
       penalty: ['dark','intense','crime','serial killer','murder','gripping','thriller',
                 'psychological','shocking','investigative','kidnapping','corporate fraud',
-                'educational','informative','science','documentary','explained','philosophy'],
+                'educational','informative','science','documentary','explained','philosophy',
+                'inspiring','business','startup','startups','entrepreneurship','motivation',
+                'budget travel','solo travel','scenic','stunning visuals','drone',
+                'profound','trauma','identity','unconventional','political thriller',
+                'social commentary','economics','finance','award-winning','slow burn','dark comedy','scam','dark comedy drama'],
     },
     think: {
       boost: ['educational','informative','science','explained','history','philosophy',
               'mind-blowing','fascinating','thought-provoking','investigative','analytical',
               'gripping','intense','spy','thriller','drama','psychological','documentary',
               'social commentary','economics','finance','technology','startups','business',
-              'inspiring','identity','unconventional','profound','smart'],
+              'inspiring','identity','unconventional','profound','smart','sharp writing',
+              '4th wall','layered','corporate dystopia','political thriller','brilliant writing',
+              'award-winning','based on true events','based on true story','facts','engaging'],
       penalty: ['funny','fun','comedy','hilarious','light','laugh','witty','quirky','absurd',
                 'warm','relatable','cringe comedy','comedy-drama','panel show','hot wings',
                 'comedy talk show','celebrity','gossip','compilation','challenge',
                 'no thinking required','observational','clean comedy','crowd interaction',
-                'food comedy','feel-good','feel good'],
+                'food comedy','feel-good','feel good','heartwarming','scenic','budget travel',
+                'food','street food','couple vlog','lifestyle','cafes','beaches'],
     },
     chill: {
       boost: ['warm','light','feel-good','gentle','scenic','calm','heartwarming','cozy',
               'nostalgic','nostalgia','family','feel good','optimism','uplifting','slice of life',
               'food','travel','street food','quiet','British countryside','lifestyle',
               'budget travel','adventure','fun','relatable','friendship','clean',
-              'feel-good','romantic','funny'],
+              'romantic','funny','couple vlog','beaches','cafes',
+              'coming of age','siblings','banter','road trip'],
       penalty: ['dark','intense','crime','serial killer','murder','thriller','gripping',
                 'shocking','psychological','corporate fraud','kidnapping','scam',
-                'investigative','analytical'],
+                'investigative','analytical','profound','trauma','corporate dystopia',
+                'political thriller','raw','bold','gangster','survival',
+                'startups','business','entrepreneurship','pitches','funding',
+                'investing','finance','economics','dark comedy','dark comedy drama'],
     },
   };
 
@@ -279,42 +290,45 @@ function computeMoodFit(content, mood) {
   if (!signals) return 50;
 
   const tags = content.tags;
-  let score = 50; // start neutral
+  let score = 50;
 
-  // Boost hits add points, penalty hits subtract — but penalty is lighter than before
-  // so content isn't brutally killed, just pushed down
   tags.forEach(tag => {
     if (signals.boost.includes(tag)) score += 12;
     if (signals.penalty.includes(tag)) score -= 15;
   });
 
+  // Genre-level nudge for content with no mood-relevant tags
+  const genre = content.genre;
+  const genreNudge = {
+    laugh: { 'Comedy / Sitcom': 5, 'Stand-up Comedy': 5, 'True Crime / Documentary': -8, 'Drama': -5 },
+    think: { 'True Crime / Documentary': 5, 'Drama': 5, 'Comedy / Sitcom': -5, 'Stand-up Comedy': -8 },
+    chill: { 'Travel / Lifestyle': 5, 'Comedy / Sitcom': 3, 'True Crime / Documentary': -5, 'Drama': -3 },
+  };
+  score += (genreNudge[mood] || {})[genre] || 0;
+
   return Math.max(0, Math.min(100, score));
 }
 
-// Hard exclusion — only truly contradictory content, checked per-item
 function isMoodContradiction(content, mood) {
   if (!mood || mood === 'anything') return false;
 
   const tags = content.tags;
 
-  // laugh: exclude content that is primarily dark/crime with NO funny element
   if (mood === 'laugh') {
-    const hasDark = tags.some(t => ['dark','serial killer','murder','kidnapping','shocking','crime'].includes(t));
+    const hasDark = tags.some(t => ['dark','serial killer','murder','kidnapping','shocking','crime','trauma'].includes(t));
     const hasFunny = tags.some(t => ['funny','fun','comedy','hilarious','light','quirky','witty','warm'].includes(t));
     if (hasDark && !hasFunny) return true;
   }
 
-  // think: exclude content that is purely mindless entertainment with NO substance
   if (mood === 'think') {
     const isMindless = tags.some(t => ['no thinking required','compilation','challenge','hot wings'].includes(t));
-    const hasSubstance = tags.some(t => ['educational','informative','business','science','history','inspiring','startups'].includes(t));
+    const hasSubstance = tags.some(t => ['educational','informative','business','science','history','inspiring','startups','smart','philosophy'].includes(t));
     if (isMindless && !hasSubstance) return true;
   }
 
-  // chill: exclude content that is primarily intense/stressful
   if (mood === 'chill') {
-    const hasIntense = tags.some(t => ['intense','serial killer','murder','kidnapping','shocking','gripping','thriller'].includes(t));
-    const hasCalm = tags.some(t => ['warm','light','gentle','fun','funny','scenic','heartwarming','romantic','feel-good'].includes(t));
+    const hasIntense = tags.some(t => ['intense','serial killer','murder','kidnapping','shocking','gripping','thriller','raw','gangster','trauma','corporate dystopia'].includes(t));
+    const hasCalm = tags.some(t => ['warm','light','gentle','fun','funny','scenic','heartwarming','romantic','feel-good','family','nostalgic'].includes(t));
     if (hasIntense && !hasCalm) return true;
   }
 
