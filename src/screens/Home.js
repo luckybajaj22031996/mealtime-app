@@ -17,10 +17,20 @@ export default function Home() {
   const navigate = useNavigate();
   const { profile, settings, setSettings, addToHistory, setFeedback, startSession, setLastMood, clearLastWatched } = useUserStore();
   const [mood, setMood] = useState(profile.lastMood || 'anything');
-  const [recs, setRecs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [recs, setRecs] = useState(() => {
+    // Restore cached recs on mount — prevents reload on Settings→Home navigation
+    try {
+      const cached = sessionStorage.getItem('mealtime_recs');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
+  const [loading, setLoading] = useState(() => {
+    try { return !sessionStorage.getItem('mealtime_recs'); } catch { return true; }
+  });
   const [error, setError] = useState('');
-  const [aiUsed, setAiUsed] = useState(false);
+  const [aiUsed, setAiUsed] = useState(() => {
+    try { return sessionStorage.getItem('mealtime_ai_used') === 'true'; } catch { return false; }
+  });
   const [showPostWatch, setShowPostWatch] = useState(false);
 
   // AI key input state
@@ -38,9 +48,17 @@ export default function Home() {
   // Meal context
   const mealCtx = getMealContext();
 
-  // Track session on mount
+  // Track session once per actual session, not per mount
+  const sessionTracked = useRef(false);
   useEffect(() => {
-    startSession();
+    if (!sessionTracked.current) {
+      sessionTracked.current = true;
+      // Only count as new session if last session was >5 min ago
+      const lastTime = profile.lastSessionTime ? new Date(profile.lastSessionTime).getTime() : 0;
+      if (Date.now() - lastTime > 5 * 60 * 1000) {
+        startSession();
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -81,9 +99,12 @@ export default function Home() {
         }).filter(Boolean);
 
         if (enriched.length >= 3) {
-          setRecs(enriched.slice(0, 5));
+          const finalRecs = enriched.slice(0, 5);
+          setRecs(finalRecs);
           setAiUsed(true);
           setLoading(false);
+          // Cache for navigation persistence
+          try { sessionStorage.setItem('mealtime_recs', JSON.stringify(finalRecs)); sessionStorage.setItem('mealtime_ai_used', 'true'); } catch {}
           return;
         }
       } catch (e) {
@@ -98,13 +119,35 @@ export default function Home() {
     }));
     setRecs(withReasons);
     setLoading(false);
+    // Cache for navigation persistence
+    try { sessionStorage.setItem('mealtime_recs', JSON.stringify(withReasons)); sessionStorage.setItem('mealtime_ai_used', 'false'); } catch {}
   }, []);
 
+  // Only load fresh recs if we don't have cached ones
+  const initialLoadDone = useRef(false);
   useEffect(() => {
-    loadRecs(mood);
+    if (!initialLoadDone.current) {
+      initialLoadDone.current = true;
+      if (recs.length === 0) {
+        loadRecs(mood);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Mood change always triggers fresh recs
+  const prevMood = useRef(mood);
+  useEffect(() => {
+    if (prevMood.current !== mood) {
+      prevMood.current = mood;
+      loadRecs(mood);
+    }
   }, [mood, loadRecs]);
 
-  const handleRefresh = () => loadRecs(mood);
+  const handleRefresh = () => {
+    try { sessionStorage.removeItem('mealtime_recs'); } catch {}
+    loadRecs(mood);
+  };
 
   const handleMoodChange = (newMood) => {
     setMood(newMood);
