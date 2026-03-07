@@ -16,18 +16,22 @@ const MOODS = [
 export default function Home() {
   const navigate = useNavigate();
   const { profile, settings, setSettings, addToHistory, setFeedback, startSession, setLastMood, clearLastWatched } = useUserStore();
+  const isFreshProfile = !profile.sessionCount || profile.sessionCount === 0;
   const [mood, setMood] = useState(profile.lastMood || 'foryou');
   const [recs, setRecs] = useState(() => {
+    if (isFreshProfile) return []; // never trust cache for fresh profile
     try {
       const cached = sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'foryou'));
       return cached ? JSON.parse(cached) : [];
     } catch { return []; }
   });
   const [loading, setLoading] = useState(() => {
+    if (isFreshProfile) return true;
     try { return !sessionStorage.getItem('mealtime_recs_' + (profile.lastMood || 'foryou')); } catch { return true; }
   });
   const [error, setError] = useState('');
   const [aiUsed, setAiUsed] = useState(() => {
+    if (isFreshProfile) return false;
     try { return sessionStorage.getItem('mealtime_ai_' + (profile.lastMood || 'foryou')) === 'true'; } catch { return false; }
   });
   const [showPostWatch, setShowPostWatch] = useState(false);
@@ -52,6 +56,17 @@ export default function Home() {
   useEffect(() => {
     if (!sessionTracked.current) {
       sessionTracked.current = true;
+      // Clear stale caches if this is a fresh profile (just onboarded)
+      if (!profile.sessionCount || profile.sessionCount === 0) {
+        try {
+          ['foryou','laugh','think','chill'].forEach(m => {
+            sessionStorage.removeItem('mealtime_recs_' + m);
+            sessionStorage.removeItem('mealtime_ai_' + m);
+          });
+        } catch {}
+        // Force fresh load since we just cleared cache
+        loadRecs(mood);
+      }
       // Only count as new session if last session was >5 min ago
       const lastTime = profile.lastSessionTime ? new Date(profile.lastSessionTime).getTime() : 0;
       if (Date.now() - lastTime > 5 * 60 * 1000) {
