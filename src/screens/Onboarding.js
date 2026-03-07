@@ -47,7 +47,7 @@ export default function Onboarding() {
     let tasteProfile = null;
     if (settings.aiEnabled && settings.apiKey) {
       try {
-        tasteProfile = await buildTasteProfile(settings.apiKey, picks, mealDuration, language, null);
+        tasteProfile = await buildTasteProfile(settings.apiKey, picks, mealDuration, language);
       } catch (e) {
         console.warn('AI profile build failed, using hardcoded:', e.message);
       }

@@ -27,30 +27,31 @@ async function callClaude(apiKey, systemPrompt, userMessage) {
   return data.content?.[0]?.text || '';
 }
 
-// Build taste profile from onboarding picks
-export async function buildTasteProfile(apiKey, picks, mealDuration, language, vibe) {
+// Build taste profile from onboarding picks — 6 cards only, no vibe
+export async function buildTasteProfile(apiKey, picks, mealDuration, language) {
   const system = `You are a content recommendation engine. Given a user's content preferences from an onboarding quiz, return a JSON object describing their taste profile. Return ONLY valid JSON, no markdown, no explanation.`;
 
-  const cardDescriptions = picks.map(p => {
-    const choices = {
-      card1: { A: 'Gullak (warm Hindi family comedy)', B: 'The Office US (dry Western workplace comedy)' },
-      card2: { A: 'Scam 1992 (gripping Indian financial thriller)', B: 'Fleabag (intimate British dark comedy-drama)' },
-      card3: { A: 'House of Secrets: Burari (dark Indian true crime)', B: 'Kurzgesagt (light animated science explainer)' },
-      card4: { A: 'Zakir Khan - Hindi emotional warm standup', B: 'John Mulaney - English sharp storytelling standup' },
-      card5: { A: 'Visa2Explore - practical Hindi India travel', B: 'Yes Theory - high energy English adventure' },
-      card6: { A: 'Shark Tank India - business reality, Hindi', B: 'Hot Ones SRK - celebrity fun, English' },
-      card7: { A: 'A 42-min immersive drama episode', B: 'A 6-min quick animated explainer' },
-      card8: { A: 'Something that makes me laugh', B: 'Something that makes me think' },
-    };
-    const chosen = (choices[p.cardId] || {})[p.choice] || p.choice;
-    return `- Chose: ${chosen}`;
-  }).join('\n');
+  const cardDescriptions = {
+    card1: { A: 'Gullak (warm Hindi family comedy)', B: 'The Office US (dry Western workplace comedy)' },
+    card2: { A: 'Scam 1992 (gripping Indian financial thriller)', B: 'Fleabag (intimate British dark comedy-drama)' },
+    card3: { A: 'House of Secrets: Burari (dark Indian true crime)', B: 'Kurzgesagt (light animated science explainer)' },
+    card4: { A: 'Zakir Khan - Hindi emotional warm standup', B: 'John Mulaney - English sharp storytelling standup' },
+    card5: { A: 'Visa2Explore - practical Hindi India travel', B: 'Yes Theory - high energy English adventure' },
+    card6: { A: 'Shark Tank India - business reality, Hindi', B: 'Hot Ones SRK - celebrity fun, English' },
+  };
 
-  const user = `User onboarding responses:
-${cardDescriptions}
+  const pickLines = picks.map(p => {
+    if (p.choice === 'skip') return `- Skipped: ${p.cardId} (no preference)`;
+    const desc = cardDescriptions[p.cardId];
+    if (!desc) return null;
+    const chosen = desc[p.choice] || p.choice;
+    return `- Chose: ${chosen}`;
+  }).filter(Boolean).join('\n');
+
+  const user = `User onboarding responses (6 forced-choice content picks):
+${pickLines}
 Meal duration: ${mealDuration}
 Language preference: ${language}
-Default vibe: ${vibe}
 
 Return JSON with this exact structure:
 {
@@ -76,9 +77,17 @@ export async function getAIRecommendations(apiKey, candidates, profile, mood) {
     `${i + 1}. [${c.id}] "${c.title}" (${c.platform}) — ${c.duration}min — ${c.genre} — Tags: ${c.tags.join(', ')} — Score: ${c._score}`
   ).join('\n');
 
-  const user = `User taste profile: ${profile.tasteProfile?.summary || 'Enjoys Indian content, mix of comedy and drama'}
+  // Translate mood ID to human-readable context for Claude
+  const moodContext = {
+    foryou: 'No specific mood — pick based on their taste profile',
+    laugh: 'Wants to laugh — comedy, light, fun content only',
+    think: 'Wants something thought-provoking — documentaries, dramas, intelligent content',
+    chill: 'Wants to relax — warm, light, scenic, feel-good content',
+  };
+
+  const user = `User taste profile: ${profile.tasteProfile?.summary || 'Enjoys a mix of content'}
 Top genres: ${profile.tasteProfile?.topGenres?.join(', ') || 'Comedy, Drama'}
-Current mood: ${mood || 'anything'}
+Current mood: ${moodContext[mood] || 'No specific mood'}
 Meal duration preference: ${profile.mealDuration || '25-35 min'}
 
 Content candidates (pre-scored by algorithm):
